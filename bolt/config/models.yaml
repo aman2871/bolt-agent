@@ -1,0 +1,56 @@
+# What each model is good for.
+#
+# `vision` here is a declared default only. `bolt models probe` tests every model
+# with a real image and stores the empirical answer, which always wins over this
+# file — several models advertise capabilities they reject at request time.
+#
+# tier:      fast | balanced | deep   (rough capability-per-second)
+# strengths: what the router should prefer this model for
+# cost:      USD per million tokens, approximate, for ranking not billing
+
+models:
+  kimi-k3:cloud:
+    tier: deep
+    vision: true
+    context: 256000
+    cost: 1.0
+    strengths: [reasoning, planning, delegation, vision]
+    notes: Strongest all-rounder. Reads images precisely. Slowest.
+
+  kimi-k2.7-code:cloud:
+    tier: balanced
+    vision: true
+    context: 256000
+    cost: 1.0
+    strengths: [code, vision, tools]
+    notes: Best code model here, and it reads images.
+
+  glm-5.2:cloud:
+    tier: balanced
+    vision: false
+    context: 128000
+    cost: 0.6
+    strengths: [review, reasoning, structured_output]
+    notes: Reliable JSON. Good critic.
+
+  deepseek-v4-pro:cloud:
+    tier: balanced
+    vision: false
+    context: 128000
+    cost: 0.8
+    strengths: [reasoning, tools, shell]
+
+  deepseek-v4-flash:cloud:
+    tier: fast
+    vision: false
+    context: 128000
+    cost: 0.2
+    strengths: [summarise, lookup, research, cheap]
+    notes: Cheapest and quickest. Default for simple work.
+
+  nemotron-3-super:cloud:
+    tier: balanced
+    vision: false
+    context: 128000
+    cost: 0.4
+    strengths: [reasoning, summarise]

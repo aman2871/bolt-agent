@@ -1,0 +1,3050 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bolt Control</title>
+<style>
+  :root {
+    --bg:#0e1014; --panel:#161920; --panel2:#11141a; --line:#252a35; --text:#e6e9ef;
+    --dim:#8b93a7; --faint:#5d6478; --accent:#7aa2f7; --ok:#7ddc8f; --bad:#f7768e;
+    --warn:#e0af68; --purple:#bb9af7;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5}
+  a{color:var(--accent);text-decoration:none}
+  .dim{color:var(--dim)} .faint{color:var(--faint)}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .acc{color:var(--accent)}
+
+  header{display:flex;align-items:center;gap:18px;padding:12px 20px;border-bottom:1px solid var(--line);
+         position:sticky;top:0;background:var(--bg);z-index:10;flex-wrap:wrap}
+  h1{margin:0;font-size:15px;letter-spacing:.18em;text-transform:uppercase}
+  .pill{border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-size:11px;color:var(--dim)}
+  .pill b{color:var(--text);font-weight:600}
+  nav{display:flex;gap:4px;margin-left:auto}
+  nav button{background:none;border:1px solid transparent;color:var(--dim);padding:5px 12px;
+             border-radius:6px;cursor:pointer;font:inherit;font-size:12px}
+  nav button:hover{color:var(--text)}
+  nav button.on{background:var(--panel);border-color:var(--line);color:var(--accent)}
+
+  main{padding:16px;display:none;gap:14px}
+  main.on{display:grid}
+  #view-overview{grid-template-columns:1fr 1fr}
+  #view-tasks{grid-template-columns:minmax(280px,1fr) 2fr}
+  @media (max-width:1000px){#view-overview,#view-tasks{grid-template-columns:1fr}}
+
+  section{background:var(--panel);border:1px solid var(--line);border-radius:9px;min-width:0}
+  section>h2{margin:0;padding:9px 13px;font-size:10px;letter-spacing:.13em;text-transform:uppercase;
+             color:var(--dim);border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+  section>h2 .right{margin-left:auto;text-transform:none;letter-spacing:0}
+  .body{padding:11px 13px;overflow-x:auto}
+  .span{grid-column:1/-1}
+
+  table{border-collapse:collapse;width:100%}
+  th,td{text-align:left;padding:5px 12px 5px 0;white-space:nowrap}
+  th{color:var(--faint);font-weight:500;border-bottom:1px solid var(--line);font-size:11px}
+  tbody tr{border-bottom:1px solid #1b1f28}
+  tbody tr.click{cursor:pointer}
+  tbody tr.click:hover{background:var(--panel2)}
+  tbody tr.sel{background:color-mix(in srgb, var(--accent) 12%, var(--panel2))}
+
+  .tiles{display:flex;flex-wrap:wrap;gap:9px}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:9px 13px;min-width:96px}
+  .tile span{color:var(--faint);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+  .tile b{display:block;font-size:18px;font-weight:600;margin-top:2px}
+
+  #log{height:400px;overflow-y:auto;font-size:12px}
+  .ev{display:flex;gap:9px;padding:1px 0}
+  .ev .who{color:var(--purple);min-width:76px;flex-shrink:0}
+  .ev .txt{white-space:pre-wrap;word-break:break-word;min-width:0}
+
+  form{display:flex;gap:8px;padding:11px 13px;flex-wrap:wrap}
+  input,select,button,textarea{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+      border-radius:6px;padding:7px 10px;font:inherit;font-size:12px}
+  input,textarea{flex:1;min-width:180px}
+  button{cursor:pointer;border-color:#2f3a52;color:var(--accent)}
+  button:hover{border-color:var(--accent)}
+  button:disabled{opacity:.45;cursor:default}
+
+  pre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:12px}
+  .msg{border-left:2px solid var(--line);padding:5px 0 5px 11px;margin-bottom:9px}
+  .msg.role-user{border-color:var(--accent)}
+  .msg.role-assistant{border-color:var(--purple)}
+  .msg.role-tool{border-color:var(--warn)}
+  .msg.role-system{border-color:var(--faint);opacity:.55}
+  .msg .lbl{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:3px}
+  .tree{list-style:none;margin:0;padding:0}
+  .tree ul{list-style:none;margin:0;padding-left:17px;border-left:1px solid var(--line)}
+  .tree li{padding:2px 0}
+  .badge{font-size:10px;border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-left:6px}
+  .empty{color:var(--faint);padding:8px 0}
+  .diff{max-height:340px;overflow:auto;background:var(--panel2);border-radius:6px;padding:9px}
+  .diff .add{color:var(--ok)} .diff .del{color:var(--bad)} .diff .hd{color:var(--accent)}
+
+  /* ---- chat ---- */
+  #view-chat.on { display: grid; grid-template-columns: 252px 1fr;
+                  height: calc(100vh - 53px); padding: 14px; gap: 14px; }
+  @media (max-width: 860px) { #view-chat.on { grid-template-columns: 1fr; }
+                              #threads { display: none; } }
+  #threads, #chatpanel { display: flex; flex-direction: column; min-height: 0; }
+  #threads .body { overflow-y: auto; padding: 8px; }
+  .thread-item { padding: 8px 10px; border-radius: 7px; cursor: pointer;
+                 color: var(--dim); font-size: 12px; line-height: 1.35;
+                 display: flex; gap: 6px; align-items: flex-start; }
+  .thread-item:hover { background: var(--panel2); color: var(--text); }
+  .thread-item.on { background: color-mix(in srgb, var(--accent) 12%, var(--panel2)); color: var(--text); }
+  .thread-item .x { margin-left: auto; opacity: 0; padding: 0 3px; }
+  .thread-item:hover .x { opacity: .6; }
+  .thread-item .x:hover { opacity: 1; color: var(--bad); }
+
+  #thread { flex: 1; overflow-y: auto; padding: 18px 22px; min-height: 0; }
+  .turn { display: flex; margin-bottom: 16px; }
+  .turn.user { justify-content: flex-end; }
+  .bubble { max-width: min(680px, 82%); padding: 10px 14px; border-radius: 14px;
+            font-size: 13.5px; line-height: 1.62; }
+  /* Tinted from the accent rather than a fixed navy: the same rule then reads
+     correctly on a light ground and in every palette. */
+  .turn.user .bubble { background: color-mix(in srgb, var(--accent) 15%, var(--panel));
+                       border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+                       border-bottom-right-radius: 4px; }
+  .turn.user .bubble { max-width: min(680px, calc(82% - 38px)); }
+  .turn.assistant .bubble { background: var(--panel2); border: 1px solid var(--line);
+                            border-bottom-left-radius: 4px; }
+  .bubble .who { font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+                 color: var(--faint); margin-bottom: 5px; }
+  .bubble p { margin: 0 0 9px; } .bubble p:last-child { margin-bottom: 0; }
+  .bubble ul, .bubble ol { margin: 6px 0; padding-left: 20px; }
+  .bubble li { margin: 1px 0; }
+  .bubble li p { margin: 0; }
+  .bubble code { background: color-mix(in srgb, var(--bg) 70%, var(--panel2)); padding: 1px 5px; border-radius: 4px;
+                 font-size: 12px; color: var(--accent); }
+  .bubble pre { background: color-mix(in srgb, var(--bg) 70%, var(--panel2)); border: 1px solid var(--line); border-radius: 8px;
+                padding: 10px 12px; overflow-x: auto; margin: 8px 0; }
+  .bubble pre code { background: none; padding: 0; color: var(--text); }
+  .bubble.spoken::before { content: "\1F399  "; }
+
+  .welcome { text-align: center; margin: 5vh auto 0; max-width: 480px; }
+  .welcome h3 { margin: 10px 0 6px; font-size: 20px; letter-spacing: .1em; }
+  .welcome p { margin: 0 auto 18px; max-width: 390px; font-size: 12.5px; }
+  .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); color: var(--dim);
+          border-radius: 99px; padding: 6px 13px; font-size: 12px; cursor: pointer;
+          font-family: inherit; }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+
+  .thinking { display: flex; gap: 7px; align-items: center; color: var(--faint);
+              font-size: 12px; }
+  .thinking .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--purple);
+                   animation: bounce 1.2s infinite; }
+  .thinking .dot:nth-child(2) { animation-delay: .15s; }
+  .thinking .dot:nth-child(3) { animation-delay: .3s; }
+  @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .45 }
+                      30% { transform: translateY(-4px); opacity: 1 } }
+
+  #composer { border-top: 1px solid var(--line); padding: 10px 14px 12px;
+              position: relative; flex: none; }
+  #waves { position: absolute; inset: auto 0 0 0; width: 100%; height: 120px;
+            pointer-events: none; opacity: 0; transition: opacity .45s; z-index: 0; }
+  #waves.live { opacity: .9; }
+  #waves-hero { display: block; margin: 0 auto; width: min(360px, 70vw); height: 96px; }
+  .composer-row { display: flex; gap: 8px; align-items: flex-end;
+                  position: relative; z-index: 1; }
+  /* The select, the textarea and the buttons all sit on one row, so they share
+     one height rather than each inheriting its own padding. */
+  .composer-row > * { min-height: 38px; }
+  .composer-row select { padding: 0 10px; border-radius: 10px; }
+  #prompt { flex: 1; resize: none; max-height: 180px; line-height: 1.5;
+            padding: 8px 12px; border-radius: 10px; font-size: 13.5px;
+            font-family: inherit; }
+  #prompt:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+
+  /* A bare list of names says nothing about what each agent is for, so the
+     picker is a real menu: name plus the one line from the roster. The <select>
+     stays as the value holder so everything reading #agent.value is unchanged. */
+  .agentpick { position: relative; flex: none; display: flex; }
+  #agent-btn { display: flex; align-items: center; gap: 7px; min-height: 38px;
+               padding: 0 11px; border-radius: 10px; font-size: 12.5px;
+               white-space: nowrap; }
+  #agent-btn .caret { color: var(--faint); font-size: 10px; }
+  #agent-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+  .agentmenu { position: absolute; bottom: calc(100% + 7px); left: 0; z-index: 30;
+               width: 320px; max-height: 340px; overflow-y: auto;
+               background: var(--panel); border: 1px solid var(--line);
+               border-radius: 12px; padding: 5px;
+               box-shadow: 0 14px 40px rgba(0,0,0,.35); }
+  .agentmenu[hidden] { display: none; }
+  .agentrow { display: block; width: 100%; text-align: left; background: none;
+              border: none; border-radius: 8px; padding: 7px 10px; cursor: pointer;
+              font-family: inherit; }
+  .agentrow:hover { background: var(--panel2); }
+  .agentrow.on { background: color-mix(in srgb, var(--accent) 14%, var(--panel2)); }
+  .agentrow b { display: block; font-size: 12.5px; font-weight: 600; color: var(--text); }
+  .agentrow.on b { color: var(--accent); }
+  .agentrow span { display: block; font-size: 11px; color: var(--dim); margin-top: 1px;
+                   white-space: normal; line-height: 1.4; }
+  .composer-row button { border-radius: 10px; padding: 0 13px; }
+  #send { border-color: var(--accent); }
+  .composer-foot { display: flex; gap: 14px; align-items: center; margin-top: 7px;
+                   font-size: 11.5px; position: relative; z-index: 1; }
+  .composer-foot label { display: flex; align-items: center; gap: 5px; }
+  .composer-foot input { min-width: auto; flex: none; }
+
+  .turn.user { align-items: center; gap: 8px; }
+  /* A real button rather than a bare glyph: 30px is a comfortable hit target,
+     and it stays faintly visible so the affordance is discoverable. */
+  .edit { display: inline-flex; align-items: center; justify-content: center;
+          width: 30px; height: 30px; flex: none; padding: 0;
+          background: var(--panel2); border: 1px solid var(--line);
+          border-radius: 9px; color: var(--dim); cursor: pointer;
+          opacity: .8; transition: opacity .15s, color .15s, border-color .15s; }
+  .edit svg { width: 16px; height: 16px; display: block; }
+  .turn.user:hover .edit { opacity: 1; color: var(--text); }
+  .edit:hover { color: var(--accent); border-color: var(--accent);
+                background: var(--panel2); }
+  .edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #send.stopping { border-color: var(--bad); color: var(--bad); }
+  .turn.assistant .bubble.stopped { opacity: .6; font-style: italic; }
+
+  .actions { display: flex; gap: 5px; margin-top: 6px; opacity: 0;
+             transition: opacity .15s; }
+  .turn.assistant:hover .actions, .actions:focus-within { opacity: 1; }
+  .act { display: inline-flex; align-items: center; justify-content: center;
+         width: 27px; height: 27px; padding: 0; background: var(--panel2);
+         border: 1px solid var(--line); border-radius: 8px; color: var(--dim);
+         cursor: pointer; transition: color .15s, border-color .15s; }
+  .act svg { width: 14px; height: 14px; display: block; }
+  .act:hover { color: var(--text); border-color: var(--accent); }
+  .act.on { color: var(--accent); border-color: var(--accent); }
+  .act.on.down { color: var(--bad); border-color: var(--bad); }
+  .act.done { color: var(--ok); border-color: var(--ok); }
+  .who .retry { color: var(--warn); letter-spacing: 0; text-transform: none; }
+
+  .note-box { display: flex; gap: 6px; margin-top: 6px; }
+  .note-box input { flex: 1; font-size: 12px; padding: 6px 9px; border-radius: 8px; }
+  .note-box button { font-size: 11px; padding: 4px 10px; border-radius: 8px; }
+
+  #replying { display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+              padding: 6px 10px; background: var(--panel2);
+              border: 1px solid var(--line); border-left: 2px solid var(--accent);
+              border-radius: 8px; font-size: 12px; }
+  #replying[hidden] { display: none; }
+  #replying-text { color: var(--dim); white-space: nowrap; overflow: hidden;
+                   text-overflow: ellipsis; flex: 1; }
+  #replying-cancel { background: none; border: none; color: var(--faint);
+                     cursor: pointer; padding: 0 4px; }
+  #replying-cancel:hover { color: var(--bad); }
+
+  .live { white-space: pre-wrap; word-break: break-word; }
+  .live::after { content: "▍"; color: var(--accent); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 0%, 50% { opacity: 1 } 50.01%, 100% { opacity: 0 } }
+
+  .bubble.proposals { max-width: min(760px, 92%); }
+  .proposal { border: 1px solid var(--line); border-radius: 9px; margin-top: 9px;
+              overflow: hidden; background: color-mix(in srgb, var(--bg) 70%, var(--panel2)); }
+  .phead { display: flex; align-items: center; gap: 10px; padding: 7px 11px;
+           background: var(--panel2); border-bottom: 1px solid var(--line);
+           font-size: 11.5px; }
+  .ppath { color: var(--accent); }
+  .pstat { color: var(--faint); }
+  .pacts { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .pacts button { font-size: 11px; padding: 3px 10px; border-radius: 7px; }
+  .pacts .apply { border-color: var(--ok); color: var(--ok); }
+  .pacts .discard { border-color: var(--line); color: var(--dim); }
+  .pacts .undo { border-color: var(--warn); color: var(--warn); }
+  .pacts button:disabled { opacity: .4; }
+  .proposal .diff { max-height: 300px; overflow: auto; margin: 0; padding: 9px 11px;
+                    font-size: 11.5px; background: none; border: none; }
+
+  #attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; }
+  #attachments[hidden] { display: none; }
+  .chip-file { display: inline-flex; align-items: center; gap: 7px;
+               background: var(--panel2); border: 1px solid var(--line);
+               border-radius: 8px; padding: 5px 9px; font-size: 11.5px;
+               color: var(--dim); }
+  .chip-file .kind { color: var(--accent); }
+  .chip-file .drop { background: none; border: none; color: var(--faint);
+                     cursor: pointer; padding: 0 2px; }
+  .chip-file .drop:hover { color: var(--bad); }
+  .chip-file.busy { opacity: .6; }
+
+  /* The whole chat panel is the drop target; anything smaller is a game of darts. */
+  #chatpanel.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
+  #dropnote { position: absolute; inset: 0; display: none; place-content: center;
+              background: color-mix(in srgb, var(--bg) 82%, transparent);
+              font-size: 14px; color: var(--accent); z-index: 5; pointer-events: none; }
+  #chatpanel.dropping #dropnote { display: grid; }
+  #chatpanel { position: relative; }
+
+  /* ---- listening modal ---- */
+  #micmodal {
+    position: fixed; inset: 0; z-index: 60;
+    display: grid; place-items: center;
+    background: color-mix(in srgb, var(--bg) 62%, transparent);
+    backdrop-filter: blur(3px);
+    animation: fade .18s ease-out;
+  }
+  #micmodal[hidden] { display: none; }
+  @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
+
+  /* A contained dialog, not a takeover. The dimmed backdrop is what blocks the
+     composer; the panel itself only needs to be a window. */
+  .mic-panel {
+    width: min(440px, 92vw);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .4);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 22px 26px 20px; text-align: center;
+    animation: rise .18s ease-out;
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(8px) scale(.985) }
+    to   { opacity: 1; transform: none }
+  }
+  #micwaves { width: 100%; height: 92px; display: block; }
+  #mic-state {
+    font-size: 15px; margin: 10px 0 0; letter-spacing: .03em;
+    font-variant-numeric: tabular-nums;
+  }
+  #mic-hint { font-size: 11.5px; margin: 5px 0 0; max-width: 300px; line-height: 1.5; }
+  .mic-actions { display: flex; gap: 8px; margin-top: 16px; }
+  .mic-actions button { padding: 7px 18px; border-radius: 9px; font-size: 12.5px; }
+  #mic-done { border-color: var(--accent); color: var(--accent); }
+  #mic-cancel { border-color: var(--line); color: var(--dim); }
+  #mic-cancel:hover { border-color: var(--bad); color: var(--bad); }
+  #micmodal.working #mic-done { opacity: .5; pointer-events: none; }
+
+  /* ---- appearance settings ---- */
+  #gear { background: none; border: 1px solid transparent; color: var(--faint);
+          cursor: pointer; padding: 4px; border-radius: 7px; display: inline-flex;
+          margin-left: auto; }
+  #gear svg { width: 15px; height: 15px; display: block; }
+  #gear:hover { color: var(--text); border-color: var(--line); }
+  header nav { margin-left: 12px; }
+
+  #appearance { position: fixed; inset: 0; z-index: 70; display: grid;
+                place-items: center;
+                background: color-mix(in srgb, var(--bg) 62%, transparent);
+                backdrop-filter: blur(3px); }
+  #appearance[hidden] { display: none; }
+  /* Two columns: a fixed list of sections, and the one section you are in.
+     Only the right side scrolls, so the section list never runs away. */
+  .settings-panel {
+    width: min(780px, 94vw); height: min(86vh, 660px); display: flex; overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.35);
+    animation: rise .18s ease-out;
+  }
+  .settings-nav { flex: none; width: 178px; padding: 18px 10px;
+                  border-right: 1px solid var(--line);
+                  background: color-mix(in srgb, var(--bg) 45%, var(--panel));
+                  display: flex; flex-direction: column; gap: 2px; }
+  .settings-navtitle { margin: 0 0 10px 10px; font-size: 11px; letter-spacing: .1em;
+                       text-transform: uppercase; color: var(--faint); }
+  .snav { text-align: left; background: none; border: none; border-radius: 8px;
+          padding: 8px 10px; font-size: 12.5px; color: var(--dim);
+          cursor: pointer; font-family: inherit; }
+  .snav:hover { color: var(--text); background: var(--panel2); }
+  .snav.on { background: color-mix(in srgb, var(--accent) 14%, var(--panel2));
+             color: var(--accent); }
+  .settings-body { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 22px 18px; }
+  .settings-pane[hidden] { display: none; }
+  .settings-panel h3 {
+    display: flex; align-items: center; gap: 10px;
+    margin: -20px -22px 16px; padding: 14px 16px 12px 22px;
+    position: sticky; top: -20px; z-index: 2;
+    font-size: 14px; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--dim);
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line);
+    border-radius: 14px 14px 0 0;
+  }
+  .setting-label { margin: 24px 0 8px; font-size: 11px; letter-spacing: .1em;
+                   text-transform: uppercase; color: var(--faint); }
+  .settings-pane > .setting-label:first-child { margin-top: 0; }
+
+  .segmented { display: flex; gap: 3px; padding: 3px; background: var(--panel2);
+               border: 1px solid var(--line); border-radius: 10px; }
+  .segmented button { flex: 1; background: none; border: none; color: var(--dim);
+                      padding: 7px 0; border-radius: 7px; font-size: 12px;
+                      cursor: pointer; font-family: inherit; }
+  .segmented button:hover { color: var(--text); }
+  .segmented button.on { background: var(--panel); color: var(--accent);
+                         box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+
+  .palettes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .palette { display: flex; align-items: center; gap: 7px; padding: 8px 8px;
+             min-width: 0;
+             background: var(--panel2); border: 1px solid var(--line);
+             border-radius: 10px; cursor: pointer; font-size: 11px;
+             color: var(--dim); font-family: inherit; text-align: left;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .palette:hover { color: var(--text); }
+  .palette.on { border-color: var(--accent); color: var(--text); }
+  .swatch { display: flex; flex: none; border-radius: 5px; overflow: hidden;
+            border: 1px solid rgba(128,128,128,.25); }
+  .swatch i { width: 7px; height: 17px; display: block; }
+
+  #settings-close { margin-left: auto; background: none; border: none;
+                    color: var(--faint); font-size: 15px; line-height: 1;
+                    padding: 4px 6px; border-radius: 7px; cursor: pointer; }
+  #settings-close:hover { color: var(--text); background: var(--panel2); }
+
+  .backgrounds { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+  /* Swatches sit on the chat's own ground, so a preview looks like the result. */
+  .bg-swatch { aspect-ratio: 1; border-radius: 7px; border: 1px solid var(--line);
+               background-color: var(--bg); cursor: pointer; padding: 0;
+               background-position: center; position: relative; }
+  .bg-swatch:hover { border-color: var(--dim); }
+  .bg-swatch.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .bg-swatch.none::after { content: "\2014"; color: var(--faint); font-size: 13px;
+                           position: absolute; inset: 0; display: grid;
+                           place-content: center; }
+  #photo-section { margin-top: 0; }
+  #photo-section[hidden] { display: none; }
+  /* Ride along in the sticky bar with Done: picking a custom image is a choice
+     about the list above, so it has to stay reachable from anywhere in it. */
+  .custom-bg { display: flex; gap: 8px; margin-top: 14px; }
+  .custom-bg[hidden] { display: none; }
+  .custom-bg button { padding: 7px 12px; border-radius: 8px; font-size: 11.5px;
+                      border-color: var(--line); color: var(--dim); }
+  .custom-bg button:hover { border-color: var(--dim); color: var(--text); }
+  .custom-bg button[hidden] { display: none; }
+
+  .switch { display: flex; align-items: center; gap: 14px; padding: 11px 12px;
+            background: var(--panel2); border: 1px solid var(--line);
+            border-radius: 10px; margin-bottom: 8px; cursor: pointer; }
+  .switch span { flex: 1; min-width: 0; }
+  .switch b { display: block; font-size: 12.5px; font-weight: 600; color: var(--text); }
+  .switch i { display: block; font-style: normal; font-size: 11.5px; color: var(--dim);
+              line-height: 1.5; margin-top: 2px; }
+  /* The checkbox is still the control — it keeps the label, the keyboard and
+     the change event — it is only painted as a switch. */
+  .switch input { appearance: none; -webkit-appearance: none; flex: none;
+                  width: 38px; height: 22px; min-width: auto; margin: 0;
+                  border-radius: 999px; background: var(--panel);
+                  border: 1px solid var(--line); position: relative;
+                  cursor: pointer; transition: background .15s, border-color .15s; }
+  .switch input::after { content: ""; position: absolute; top: 2px; left: 2px;
+                         width: 16px; height: 16px; border-radius: 50%;
+                         background: var(--dim); transition: transform .15s, background .15s; }
+  .switch input:checked { background: color-mix(in srgb, var(--accent) 78%, transparent);
+                          border-color: var(--accent); }
+  .switch input:checked::after { transform: translateX(16px); background: #fff; }
+  .switch input:disabled { opacity: .45; cursor: default; }
+  .switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- connection and agents ---- */
+  .field-hint { margin: -2px 0 12px 108px; font-size: 11.5px; color: var(--dim);
+                line-height: 1.55; }
+  .field-hint b { color: var(--text); font-weight: 600; }
+  .linkish { background: none; border: none; padding: 0 0 0 8px; font-size: 11.5px;
+             color: var(--accent); cursor: pointer; font-family: inherit;
+             text-decoration: underline; }
+  .keybox { flex: 1; display: flex; gap: 6px; min-width: 0; }
+  .keybox input { flex: 1; min-width: 0; }
+  .keybox input.saved { color: var(--dim); font-family: inherit; }
+  .keybox button { flex: none; padding: 7px 12px; border-radius: 8px; font-size: 11.5px; }
+  .field { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .field label { flex: none; width: 96px; font-size: 12px; color: var(--dim); }
+  .field input, .field select, .field textarea { flex: 1; min-width: 0; font-size: 12.5px;
+                                                 padding: 7px 10px; border-radius: 8px; }
+  .field textarea { resize: vertical; min-height: 110px; font-family: inherit;
+                    line-height: 1.55; }
+  .field-actions { display: flex; align-items: center; gap: 10px; margin: 10px 0 14px; }
+  .field-actions .faint { margin-right: auto; font-size: 11px; }
+  .field-actions button { padding: 7px 14px; border-radius: 9px; font-size: 12px; }
+  #ollama-save, #agent-new, #agent-save { border-color: var(--accent); color: var(--accent); }
+  #agent-delete { border-color: var(--line); color: var(--dim); }
+  #agent-delete:hover { border-color: var(--bad); color: var(--bad); }
+
+  .modelrows, #agent-list { display: flex; flex-direction: column; gap: 6px; }
+  .rowcard { display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+             background: var(--panel2); border: 1px solid var(--line);
+             border-radius: 10px; font-size: 12px; }
+  .rowcard .grow { flex: 1; min-width: 0; }
+  .rowcard b { display: block; font-size: 12.5px; color: var(--text); }
+  .rowcard i { font-style: normal; font-size: 11px; color: var(--dim); }
+  .rowcard button { padding: 5px 10px; border-radius: 7px; font-size: 11px; }
+  .tag { font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+         color: var(--faint); border: 1px solid var(--line); border-radius: 5px;
+         padding: 2px 6px; }
+  .tag.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+  .toolgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 10px;
+              margin-bottom: 12px; }
+  .toolgrid label { display: flex; align-items: center; gap: 6px; font-size: 11.5px;
+                    color: var(--dim); }
+  .toolgrid input { min-width: auto; flex: none; }
+
+  /* ---- usage ---- */
+  .pane-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .pane-head .setting-label { margin: 0; }
+  .pane-head button { margin-left: auto; padding: 5px 11px; border-radius: 8px;
+                      font-size: 11.5px; }
+  .pane-head + #usage-body .limit:first-child { margin-top: 2px; }
+  #usage-body { transition: opacity .15s; }
+  #usage-body.busy { opacity: .45; pointer-events: none; }
+  #usage-refresh[disabled] { opacity: .6; }
+  .limit { margin-bottom: 14px; }
+  .limit-top { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px;
+               margin-bottom: 6px; }
+  .limit-top b { color: var(--text); }
+  .limit-top span { margin-left: auto; font-variant-numeric: tabular-nums;
+                    color: var(--dim); }
+  .limit-bar { height: 9px; border-radius: 5px; background: var(--panel2);
+               border: 1px solid var(--line); overflow: hidden; }
+  .limit-bar i { display: block; height: 100%; background: var(--accent); }
+  .limit-bar i.hot { background: var(--bad); }
+  .limit-models { font-size: 11px; color: var(--dim); margin-top: 5px;
+                  line-height: 1.5; }
+  .usage-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+                 gap: 8px; margin-bottom: 18px; }
+  .usage-tile { background: var(--panel2); border: 1px solid var(--line);
+                border-radius: 10px; padding: 10px 12px; }
+  .usage-tile b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+  .usage-tile span { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+                     color: var(--faint); }
+  .usage-bars { display: flex; align-items: flex-end; gap: 3px; height: 74px;
+                margin-bottom: 6px; }
+  .usage-bars i { flex: 1; background: color-mix(in srgb, var(--accent) 55%, transparent);
+                  border-radius: 2px 2px 0 0; min-height: 2px; display: block; }
+  .usage-bars i:hover { background: var(--accent); }
+  .usage-table { width: 100%; border-collapse: collapse; font-size: 12px;
+                 margin-bottom: 16px; }
+  .usage-table th { text-align: left; font-size: 10.5px; letter-spacing: .08em;
+                    text-transform: uppercase; color: var(--faint);
+                    padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  .usage-table td { padding: 6px 8px; border-bottom: 1px solid
+                    color-mix(in srgb, var(--line) 55%, transparent); }
+  .usage-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .usage-note { font-size: 11.5px; color: var(--dim); line-height: 1.55;
+                background: var(--panel2); border: 1px solid var(--line);
+                border-radius: 10px; padding: 10px 12px; }
+  .usage-note a { color: var(--accent); }
+  .usage-note.warn { border-color: var(--bad); }
+
+  /* The background sits behind the thread. A scrim keeps message text legible
+     over a photograph, which is otherwise a coin toss. */
+  #thread { background-repeat: repeat; background-position: center; }
+  #thread.has-image { background-size: cover; background-repeat: no-repeat;
+                      background-attachment: local; }
+  /* A photograph has bright regions wherever it likes, and text has to stay
+     readable over all of them — so the scrim is heavier than looks necessary on
+     a dark image, and the welcome copy gets its own shadow on top. */
+  #thread.has-image::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: color-mix(in srgb, var(--bg) 80%, transparent);
+  }
+  /* Over a photograph the welcome copy needs the image quietened behind it. A
+     backdrop blur smeared the photo into a visible vertical band, and a wash
+     painted on the element itself gets cut off square at the box edge. So the
+     wash lives on an oversized pseudo-element and reaches full transparency
+     well inside it — no edge anywhere, and the copy keeps the solid text token
+     so it stays readable on a bright photo in light mode. */
+  #thread.has-image .welcome {
+    position: relative;
+    padding: 26px 30px 28px;
+    max-width: 520px;
+  }
+  #thread.has-image .welcome::before {
+    content: ""; position: absolute; inset: -70px -60px; z-index: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse 62% 58% at 50% 46%,
+      color-mix(in srgb, var(--bg) 94%, transparent) 0%,
+      color-mix(in srgb, var(--bg) 82%, transparent) 55%,
+      transparent 100%);
+    /* A little depth-of-field under the copy, masked on exactly the same curve
+       as the wash so the blur and the tint fade out together — one soft pool
+       rather than two effects with different edges. */
+    backdrop-filter: blur(7px);
+    -webkit-backdrop-filter: blur(7px);
+    mask-image: radial-gradient(ellipse 62% 58% at 50% 46%,
+      #000 0%, rgba(0,0,0,.85) 55%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 62% 58% at 50% 46%,
+      #000 0%, rgba(0,0,0,.85) 55%, transparent 100%);
+  }
+  /* The wash can't use a negative z-index: that needs a stacking context on
+     .welcome, and the copy has to sit above it either way. */
+  #thread.has-image .welcome > * { position: relative; z-index: 1; }
+  #thread.has-image .welcome p { color: var(--text); }
+  #thread.has-image .chip {
+    background: color-mix(in srgb, var(--panel2) 92%, transparent);
+    border-color: var(--line);
+  }
+  #thread.has-image .turn { position: relative; }
+  #chatpanel > #thread { position: relative; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Bolt</h1>
+  <span class="pill" id="p-ws">ws <b class="dim">…</b></span>
+  <span class="pill" id="p-redis">redis <b class="dim">…</b></span>
+  <span class="pill" id="p-sandbox">sandbox <b class="dim">…</b></span>
+  <span class="pill" id="p-workers">workers <b class="dim">…</b></span>
+  <span class="pill" id="p-voice">voice <b class="dim">…</b></span>
+  <button type="button" id="gear" title="Appearance" aria-label="Appearance">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+    </svg>
+  </button>
+  <nav>
+    <button data-view="chat" class="on">chat</button>
+    <button data-view="overview">overview</button>
+    <button data-view="tasks">tasks</button>
+    <button data-view="code">code gate</button>
+    <button data-view="models">models</button>
+    <button data-view="evals">evals</button>
+  </nav>
+</header>
+
+<!-- CHAT -->
+<main id="view-chat" class="on">
+  <section id="threads">
+    <h2>Conversations <span class="right"><button id="newchat" style="padding:2px 9px">new</button></span></h2>
+    <div class="body" id="threadlist"></div>
+  </section>
+
+  <section id="chatpanel">
+    <h2><span id="chattitle">New conversation</span>
+      <span class="right faint" id="chatmeta"></span></h2>
+
+    <div id="thread">
+      <div class="welcome">
+        <canvas id="waves-hero" width="360" height="96"></canvas>
+        <h3>Bolt</h3>
+        <p class="faint">Ask anything, or hold the mic and say
+          “Bolt, …”. The manager will pull in whichever specialists it needs.</p>
+        <div class="suggestions">
+          <button class="chip">What changed in the config?</button>
+          <button class="chip">Summarise the bus module in two sentences</button>
+          <button class="chip">Which models can see images?</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="dropnote">drop a video, image or file to hand it to Bolt</div>
+    <div id="composer">
+      <canvas id="waves" width="640" height="120"></canvas>
+      <div id="attachments" hidden></div>
+      <input type="file" id="filepicker" multiple hidden
+             accept="image/*,video/*,.txt,.md,.csv,.json,.yaml,.yml,.log,.py,.js,.ts,.sql,.pdf">
+      <div id="replying" hidden>
+        <span class="faint">replying to</span>
+        <span id="replying-text"></span>
+        <button type="button" id="replying-cancel" title="Cancel reply">✕</button>
+      </div>
+      <div class="composer-row">
+        <div class="agentpick">
+          <select id="agent" hidden></select>
+          <button type="button" id="agent-btn" title="Who to ask"
+                  aria-haspopup="listbox" aria-expanded="false">
+            <span id="agent-name">manager</span><span class="caret">▾</span>
+          </button>
+          <div class="agentmenu" id="agent-menu" role="listbox" hidden></div>
+        </div>
+        <textarea id="prompt" rows="1" placeholder="Message Bolt…"></textarea>
+        <button type="button" id="attach" title="Attach a file">📎</button>
+      <button type="button" id="mic" title="Speak">🎙</button>
+        <button type="button" id="hush" title="Stop speaking">✋</button>
+        <button type="button" id="send" title="Send">↑</button>
+      </div>
+      <div class="composer-foot">
+        <label class="faint"><input type="checkbox" id="speakback" checked> speak replies</label>
+        <span class="faint" id="micstatus"></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- APPEARANCE -->
+<div id="appearance" hidden>
+  <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="appearance-title">
+   <nav class="settings-nav">
+     <p class="settings-navtitle">Settings</p>
+     <button type="button" class="snav on" data-pane="usage">Usage</button>
+     <button type="button" class="snav" data-pane="appearance">Appearance</button>
+     <button type="button" class="snav" data-pane="voice">Voice</button>
+     <button type="button" class="snav" data-pane="connection">Connection</button>
+     <button type="button" class="snav" data-pane="agents">Agents</button>
+   </nav>
+   <div class="settings-body">
+    <h3 id="appearance-title"><span id="settings-heading">Appearance</span>
+      <button type="button" id="settings-close" aria-label="Close settings"
+              title="Close">&#10005;</button>
+    </h3>
+
+    <div class="settings-pane" id="pane-appearance" hidden>
+    <p class="setting-label">Mode</p>
+    <div class="segmented" id="mode-picker">
+      <button type="button" data-mode="system">System</button>
+      <button type="button" data-mode="light">Light</button>
+      <button type="button" data-mode="dark">Dark</button>
+    </div>
+
+    <p class="setting-label">Theme</p>
+    <div class="palettes" id="palette-picker"></div>
+
+    <p class="setting-label">Chat background</p>
+    <div class="backgrounds" id="background-picker"></div>
+
+    <div id="photo-section" hidden>
+      <p class="setting-label">Photos</p>
+      <div class="backgrounds" id="photo-picker"></div>
+    </div>
+    <div class="custom-bg">
+      <button type="button" id="custom-bg-btn">Use an image…</button>
+      <button type="button" id="custom-bg-clear" hidden>Remove image</button>
+      <input type="file" id="custom-bg-file" accept="image/*" hidden>
+    </div>
+    </div><!-- /pane-appearance -->
+
+    <div class="settings-pane" id="pane-voice" hidden>
+      <p class="setting-label">Switches</p>
+      <label class="switch">
+        <span><b>Listening</b><i>Answer when you speak. Off releases the
+              microphone entirely — nothing is recorded or transcribed.</i></span>
+        <input type="checkbox" id="voice-enabled">
+      </label>
+      <label class="switch">
+        <span><b>Speak replies</b><i>Read answers out loud in this tab.</i></span>
+        <input type="checkbox" id="voice-speakback">
+      </label>
+      <p class="setting-label">On this machine</p>
+      <div class="usage-note" id="voice-detail">Checking…</div>
+    </div>
+
+    <div class="settings-pane" id="pane-connection" hidden>
+      <p class="setting-label">Ollama</p>
+      <div class="field">
+        <label for="ollama-url">Endpoint</label>
+        <input id="ollama-url" type="text" spellcheck="false"
+               placeholder="http://localhost:11434/v1">
+      </div>
+      <p class="field-hint">Where Bolt sends every model request. <span id="url-explain"></span>
+        <button type="button" class="linkish" data-url="http://host.docker.internal:11434/v1">Use local Ollama</button>
+        <button type="button" class="linkish" data-url="https://ollama.com/v1">Use Ollama Cloud</button>
+      </p>
+
+      <div class="field">
+        <label for="ollama-key">API key</label>
+        <div class="keybox" id="keybox">
+          <input id="ollama-key" type="password" spellcheck="false"
+                 autocomplete="off" placeholder="paste your Ollama key">
+          <button type="button" id="key-replace" hidden>Replace</button>
+          <button type="button" id="key-remove" hidden>Remove</button>
+        </div>
+      </div>
+      <p class="field-hint" id="ollama-keystate"></p>
+      <div class="field-actions">
+        <button type="button" id="ollama-save">Save &amp; connect</button>
+      </div>
+      <div class="usage-note" id="ollama-result">Not checked yet.</div>
+
+      <p class="setting-label">Models</p>
+      <div id="model-list" class="modelrows"></div>
+    </div>
+
+    <div class="settings-pane" id="pane-agents" hidden>
+      <div id="agent-list"></div>
+      <div class="field-actions">
+        <span class="faint">Shipped agents can be edited and reset; your own can be deleted.</span>
+        <button type="button" id="agent-new">New agent</button>
+      </div>
+      <div id="agent-editor" hidden></div>
+    </div>
+
+    <div class="settings-pane" id="pane-usage" hidden>
+      <div class="pane-head">
+        <p class="setting-label">Ollama account</p>
+        <button type="button" id="usage-refresh">Refresh</button>
+      </div>
+      <div id="usage-body"></div>
+    </div>
+
+   </div>
+  </div>
+</div>
+
+<!-- LISTENING -->
+<div id="micmodal" hidden>
+  <div class="mic-panel" role="dialog" aria-modal="true" aria-labelledby="mic-state">
+    <canvas id="micwaves" width="440" height="92"></canvas>
+    <p id="mic-state">Listening…</p>
+    <p id="mic-hint" class="faint">Say “Bolt, …” or an agent name. Enter or Done to send.</p>
+    <div class="mic-actions">
+      <button type="button" id="mic-cancel">Cancel</button>
+      <button type="button" id="mic-done">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- OVERVIEW -->
+<main id="view-overview">
+  <section>
+    <h2>Live trace <span class="right"><button id="clear-log" style="padding:2px 8px">clear</button></span></h2>
+    <div class="body" id="log"></div>
+  </section>
+
+  <section>
+    <h2>Agents</h2>
+    <div class="body">
+      <div class="tiles" id="totals"></div>
+      <table style="margin-top:12px"><thead><tr>
+        <th>agent</th><th>state</th><th>model</th><th>calls</th><th>tokens</th>
+        <th>p50</th><th>p95</th><th>ok</th><th>$</th>
+      </tr></thead><tbody id="agents"></tbody></table>
+      <div class="faint" style="margin-top:9px">
+        <b>auto</b> lets the router pick per task from the model's tier, strengths and
+        whether the task needs vision. Choosing a model here pins it until you set it back to auto.
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- TASKS -->
+<main id="view-tasks">
+  <section>
+    <h2>Requests <span class="right faint">click to inspect</span></h2>
+    <div class="body">
+      <label class="faint" style="display:block;margin-bottom:7px">
+        <input type="checkbox" id="roots-only" checked style="min-width:auto;flex:none"> top-level only
+      </label>
+      <table><thead><tr><th>agent</th><th>status</th><th>tok</th><th>prompt</th></tr></thead>
+      <tbody id="tasklist"></tbody></table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Detail <span class="right faint" id="detail-id">nothing selected</span></h2>
+    <div class="body" id="detail"><div class="empty">Pick a request to see its delegation tree, full transcript and any diff it produced.</div></div>
+  </section>
+</main>
+
+<!-- CODE GATE -->
+<main id="view-code">
+  <section class="span">
+    <h2>Code gate <span class="right faint">snapshot → tests → review → retry</span></h2>
+    <form id="codeform">
+      <input id="codetask" placeholder="Describe the change you want made" autocomplete="off">
+      <input id="codetest" value="python3 -m pytest -q" style="max-width:230px">
+      <label class="faint" style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" id="codeapply" style="min-width:auto;flex:none"> apply if approved
+      </label>
+      <button type="submit">run</button>
+    </form>
+    <div class="body faint" id="codehint">
+      Forge works in an isolated snapshot. Nothing reaches the workspace unless the
+      tests pass, Sentinel approves, and “apply” is ticked. Watch it happen in the trace below.
+    </div>
+  </section>
+  <section class="span"><h2>Trace</h2><div class="body" id="log2" style="height:300px;overflow-y:auto"></div></section>
+  <section class="span"><h2>Result</h2><div class="body" id="coderesult"><div class="empty">No run yet.</div></div></section>
+</main>
+
+<!-- MODELS -->
+<main id="view-models">
+  <section class="span">
+    <h2>Model catalogue
+      <span class="right"><button id="probe" style="padding:2px 9px">run capability probes</button></span>
+    </h2>
+    <div class="body">
+      <div id="modelmatrix"></div>
+      <div class="faint" style="margin-top:10px" id="probenote"></div>
+    </div>
+  </section>
+  <section class="span">
+    <h2>Routing rules</h2>
+    <div class="body faint">
+      Hard requirements are filtered first, using what the probes observed rather than
+      what the config claims — a task needing vision only ever sees models that read an
+      image here. What is left is scored on tier, the agent's preferred strengths,
+      measured speed and cost. A pin beats the router; an explicit model in agents.yaml
+      beats auto; and a pin missing a required capability is overridden rather than
+      allowed to fail silently.
+    </div>
+  </section>
+</main>
+
+<!-- EVALS -->
+<main id="view-evals">
+  <section class="span">
+    <h2>Scoreboard <span class="right faint">run: bolt eval baseline --label &lt;name&gt;</span></h2>
+    <div class="body"><table><thead><tr>
+      <th>agent</th><th>model</th><th>label</th><th>passed</th><th>avg score</th>
+      <th>tokens</th><th>avg latency</th></tr></thead><tbody id="board"></tbody></table></div>
+  </section>
+  <section class="span">
+    <h2>Runs</h2>
+    <div class="body"><table><thead><tr>
+      <th>eval</th><th>agent</th><th>model</th><th>label</th><th>result</th>
+      <th>tok</th><th>ms</th><th>failures</th></tr></thead><tbody id="evalruns"></tbody></table></div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[<>&]/g, (c) => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+const clip = (s, n) => { s = String(s ?? ""); return s.length > n ? s.slice(0, n) + "…" : s; };
+const live = new Set();          // agents currently mid-run
+let selected = null;
+let view = "overview";
+
+/* ---------- navigation ---------- */
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  view = b.dataset.view;
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll("main").forEach((m) => m.classList.toggle("on", m.id === "view-" + view));
+  refresh();
+});
+
+/* ---------- live trace ---------- */
+function line(html, target) {
+  const box = target || $("#log");
+  const el = document.createElement("div");
+  el.className = "ev";
+  el.innerHTML = html;
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.appendChild(el);
+  if (atBottom) box.scrollTop = box.scrollHeight;
+  while (box.children.length > 500) box.removeChild(box.firstChild);
+}
+
+function render(ev) {
+  if (ev.kind === "ping") return;
+  const who = `<span class="who">${esc(ev.agent ?? "")}</span>`;
+  const say = (html) => { line(who + `<span class="txt">${html}</span>`);
+                          line(who + `<span class="txt">${html}</span>`, $("#log2")); };
+
+  if (ev.agent) {
+    if (ev.kind === "iteration") live.add(ev.agent);
+    if (ev.kind === "final") live.delete(ev.agent);
+  }
+
+  switch (ev.kind) {
+    case "model":       noteStep(`${ev.agent} · ${ev.model}`); return say(`<span class="${ev.source === "auto" ? "ok" : ev.source === "override" ? "warn" : "faint"}">uses ${esc(ev.model)}</span> <span class="faint">${esc(ev.reason)}</span>`);
+    case "iteration":   return say(`<span class="faint">step ${ev.iteration}</span>`);
+    case "tool_call":   return say(`<span class="acc">→ ${esc(ev.tool)}</span> <span class="faint">${esc(clip(ev.arguments,150))}</span>`);
+    case "tool_result": return say(`<span class="faint">← ${esc(ev.tool)} ${esc(clip(ev.result,150))}</span>`);
+    case "sandbox_ready": return say(`<span class="warn">sandbox ready</span> <span class="faint">${esc(ev.workdir)}</span>`);
+    case "attempt":     return say(`<span class="warn">attempt ${ev.number}/${ev.of}</span>`);
+    case "tests":       return say(`<span class="${ev.passed?"ok":"bad"}">tests ${ev.passed?"passed":"failed"}</span> <span class="faint">exit ${ev.exit_code} · ${esc(ev.isolation)} · ${ev.duration_ms}ms</span>`);
+    case "voice_stop":  return say(`<span class="warn">speech stopped</span>`);
+    case "gated":       return say(`<span class="faint">not listening — ${esc(ev.reason)}</span>`);
+    case "ungated":     return say(`<span class="ok">listening again</span>`);
+    case "transcript":  return say(`<span class="acc">heard</span> <span class="faint">“${esc(ev.text)}”${ev.addressed ? ` → ${esc(ev.routed_to)}` : " (not addressed)"}</span>`);
+    case "stream_start":
+      // Latch onto the first stream of this request, then ignore any others so a
+      // delegated agent cannot write into the reply.
+      if (sending && !streamTask) streamTask = ev.task_id;
+      return;
+    case "delta":
+      if (sending && ev.task_id === streamTask) streamDelta(ev.agent, ev.text);
+      return;
+    case "reasoning":
+      if (sending && ev.task_id === streamTask && !streamText) noteStep(`${ev.agent} · thinking`);
+      return;
+    case "stream_end":
+      return;
+    case "probe":       return line(`<span class="who">probe</span><span class="txt"><span class="${ev.supported ? "ok" : "bad"}">${ev.supported ? "pass" : "fail"}</span> <span class="acc">${esc(ev.model)}</span> <span class="faint">${esc(ev.capability)} — ${esc(ev.detail)}</span></span>`);
+    case "review":      return say(`<span class="${ev.verdict==="approve"?"ok":"bad"}">review ${esc(ev.verdict)}</span> <span class="faint">${esc(ev.summary??"")}</span>`
+                                   + (ev.findings||[]).map((f)=>`\n   <span class="bad">·</span> <span class="faint">${esc(f)}</span>`).join(""));
+    case "final":       return say(`<span class="ok">done</span>`);
+    default:            return say(`<span class="faint">${esc(ev.kind)}</span>`);
+  }
+}
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  let heartbeat = null;
+  ws.onopen = () => {
+    setPill("#p-ws", "live", "ok");
+    // The server treats these as proof this tab is still open, and the voice
+    // daemon listens only while that holds. Closing the tab stops them.
+    heartbeat = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send("alive");
+    }, 10000);
+    if (ws.readyState === WebSocket.OPEN) ws.send("alive");
+  };
+  ws.onmessage = (m) => { const ev = JSON.parse(m.data); render(ev);
+                          if (ev.kind === "final") { refresh(); } };
+  ws.onclose = () => {
+    clearInterval(heartbeat);
+    setPill("#p-ws", "down", "bad");
+    setTimeout(connect, 1500);
+  };
+}
+$("#clear-log").onclick = () => ($("#log").innerHTML = "");
+
+const setPill = (sel, text, cls) => ($(sel).querySelector("b").outerHTML = `<b class="${cls}">${text}</b>`);
+
+/* ---------- header health ---------- */
+async function health() {
+  try {
+    const h = await fetch("/api/health").then((r) => r.json());
+    setPill("#p-redis", h.redis ? "up" : "down", h.redis ? "ok" : "bad");
+    setPill("#p-sandbox", h.sandbox_tier, h.docker ? "ok" : "warn");
+    const n = Object.values(h.workers).reduce((a, b) => a + b, 0);
+    setPill("#p-workers", `${n} · ${h.bus_mode}`, n ? "ok" : "dim");
+    const v = h.voice || {};
+    setPill("#p-voice",
+      v.enabled === false ? "off"
+        : v.speaking ? "speaking" : v.paused ? "paused"
+        : v.tab_open ? "listening" : "idle",
+      v.enabled === false ? "dim" : v.speaking ? "warn" : v.tab_open ? "ok" : "dim");
+    $("#hush").classList.toggle("active", !!v.speaking);
+    if (v.enabled !== undefined) applyVoiceEnabled(v.enabled !== false);
+    // The daemon has the microphone, not this page — reflect it anyway.
+    if (!recorder && view === "chat") {
+      if (v.speaking) { showWaves(true); waves.setLevel(0.55); }
+      // Idle listening drew a dead-flat line across the composer that read as a
+      // stray border. The status chip already says the mic is live; the waveform
+      // is for when there is actually something to show.
+      else if (v.tab_open && !v.paused) { showWaves(false); }
+      else showWaves(false);
+    }
+    window._workers = h.workers;
+  } catch { setPill("#p-redis", "?", "bad"); }
+}
+
+/* ---------- overview ---------- */
+async function refreshOverview() {
+  const m = await fetch("/api/metrics").then((r) => r.json());
+  $("#totals").innerHTML = [
+    ["requests", m.totals.tasks], ["done", m.totals.tasks_done],
+    ["llm calls", m.totals.calls], ["tokens", m.totals.tokens.toLocaleString()],
+    ["retries", m.totals.retries], ["est. cost", "$" + m.totals.cost_usd.toFixed(4)],
+  ].map(([k, v]) => `<div class="tile"><span>${k}</span><b>${v}</b></div>`).join("");
+
+  const workers = window._workers || {};
+  const stats = Object.fromEntries(m.agents.map((a) => [a.agent, a]));
+  const roster = window._agents || [];
+  const catalogue = window._models || [];
+
+  // Every roster agent gets a row, even one that has never run.
+  $("#agents").innerHTML = roster.map((r) => {
+    const a = stats[r.name] || { calls: 0, tokens: 0, p50_ms: 0, p95_ms: 0,
+                                 success_rate: null, cost_usd: 0 };
+    const state = live.has(r.name) ? `<span class="warn">running</span>`
+                : workers[r.name] ? `<span class="ok">worker</span>`
+                : `<span class="faint">idle</span>`;
+
+    const needsVision = (r.requires || []).includes("vision");
+    const options = catalogue
+      .filter((mm) => !needsVision || mm.vision)
+      .map((mm) => `<option value="${mm.name}" ${r.model_source === "override" && r.resolved_model === mm.name ? "selected" : ""}>${mm.name}</option>`)
+      .join("");
+    const auto = `<option value="auto" ${r.model_source !== "override" ? "selected" : ""}>auto — ${r.resolved_model}</option>`;
+    const cls = r.model_source === "override" ? "warn" : "ok";
+
+    return `<tr><td class="acc">${r.name}</td><td>${state}</td>
+      <td><select class="modelpick ${cls}" data-agent="${r.name}"
+           style="padding:2px 6px;font-size:11px;max-width:230px">${auto}${options}</select></td>
+      <td>${a.calls}</td><td>${a.tokens.toLocaleString()}</td>
+      <td>${a.p50_ms}ms</td><td>${a.p95_ms}ms</td>
+      <td class="${a.success_rate === 1 ? "ok" : "warn"}">${a.success_rate ?? "-"}</td>
+      <td>$${a.cost_usd.toFixed(4)}</td></tr>`;
+  }).join("");
+
+  $("#agents").querySelectorAll(".modelpick").forEach((sel) => {
+    sel.title = roster.find((r) => r.name === sel.dataset.agent)?.model_reason || "";
+    sel.onchange = async () => {
+      const res = await fetch(`/api/agents/${sel.dataset.agent}/model`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: sel.value }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "failed" }));
+        alert(err.detail);
+      }
+      await loadAgents();
+      refreshOverview();
+    };
+  });
+}
+
+async function refreshModels() {
+  const meta = window._modelmeta || { capabilities: [], discriminating: [], descriptions: {} };
+  const caps = meta.capabilities || [];
+  const inUse = {};
+  (window._agents || []).forEach((r) => {
+    (inUse[r.resolved_model] = inUse[r.resolved_model] || []).push(r.name);
+  });
+
+  const cell = (mm, cap) => {
+    if (!(cap in (mm.probed || {}))) return `<td class="faint" title="never tested">·</td>`;
+    const ok = mm.probed[cap];
+    return `<td class="${ok ? "ok" : "bad"}" title="${esc(meta.descriptions[cap] || cap)}">${ok ? "yes" : "no"}</td>`;
+  };
+
+  const head = `<tr><th>model</th><th>tok/s</th><th>$/Mtok</th><th>ctx</th>` +
+    caps.map((c) => `<th title="${esc(meta.descriptions[c] || "")}">${c.replace(/_/g, " ")}</th>`).join("") +
+    `<th>used by</th></tr>`;
+
+  const rows = (window._models || [])
+    .slice().sort((a, b) => (b.speed || 0) - (a.speed || 0))
+    .map((mm) => `<tr><td class="acc">${mm.name}</td>
+        <td>${mm.speed ? Math.round(mm.speed) : "-"}</td>
+        <td>$${mm.cost.toFixed(2)}</td><td>${Math.round(mm.context / 1000)}k</td>
+        ${caps.map((c) => cell(mm, c)).join("")}
+        <td>${(inUse[mm.name] || []).join(", ") || "-"}</td></tr>`).join("");
+
+  $("#modelmatrix").innerHTML = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+
+  const split = meta.discriminating || [];
+  const uniform = caps.filter((c) => !split.includes(c));
+  $("#probenote").innerHTML = caps.length
+    ? `<b>yes</b> / <b>no</b> are observed results — a real request was sent and this is what
+       happened. <b>·</b> means never tested.
+       ${uniform.length ? `Every model passed <b>${uniform.join(", ")}</b>, so those tell the
+       router nothing.` : ""}
+       What actually separates them: <b>${split.length ? split.join(", ") : "nothing but speed and cost"}</b>.`
+    : `Nothing probed yet — hit “run capability probes”.`;
+}
+
+$("#probe").onclick = async () => {
+  const b = $("#probe");
+  b.disabled = true; b.textContent = "probing…";
+  try {
+    await fetch("/api/models/probe", { method: "POST" });
+    await loadAgents();
+    refreshModels();
+  } finally { b.disabled = false; b.textContent = "run capability probes"; }
+};
+
+/* ---------- tasks ---------- */
+async function refreshTasks() {
+  const roots = $("#roots-only").checked;
+  const rows = await fetch(`/api/tasks?limit=60&roots_only=${roots}`).then((r) => r.json());
+  $("#tasklist").innerHTML = rows.map((t) => `
+    <tr class="click ${t.id === selected ? "sel" : ""}" data-id="${t.id}">
+      <td class="acc">${t.agent}</td>
+      <td class="${t.status === "done" ? "ok" : t.status === "running" ? "warn" : "bad"}">${t.status}</td>
+      <td>${t.tokens.toLocaleString()}</td>
+      <td class="faint">${esc(clip(t.prompt, 58))}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="empty">nothing yet</td></tr>`;
+
+  $("#tasklist").querySelectorAll("tr.click").forEach((tr) =>
+    tr.onclick = () => { selected = tr.dataset.id; refreshTasks(); showDetail(selected); });
+}
+$("#roots-only").onchange = refreshTasks;
+
+function treeHtml(node) {
+  const status = node.status === "done" ? "ok" : node.status === "running" ? "warn" : "bad";
+  const kids = node.children?.length ? `<ul>${node.children.map(treeHtml).join("")}</ul>` : "";
+  const here = node.id === selected ? ' style="background:color-mix(in srgb, var(--accent) 12%, var(--panel2));border-radius:4px"' : "";
+  return `<li><span class="node" data-id="${node.id}"${here}>
+    <span class="acc">${node.agent}</span>
+    <span class="${status}">${node.status}</span>
+    <span class="badge faint">${node.tokens} tok</span>
+    <span class="badge faint">${node.calls} calls</span></span>
+    <div class="faint">${esc(clip(node.prompt, 130))}</div>${kids}</li>`;
+}
+
+function diffHtml(diff) {
+  // `diff -ruN` repeats the whole command with its exclude list per file; keep
+  // the filenames and drop the noise.
+  const cleaned = diff.replace(/^diff -ruN (?:--exclude=\S+ )*(\S+) (\S+)$/gm,
+    (_m, a, b) => `diff ${a.split("/").slice(-3).join("/")} → ${b.split("/").slice(-3).join("/")}`);
+  return esc(cleaned).split("\n").map((l) =>
+    l.startsWith("+") ? `<span class="add">${l}</span>` :
+    l.startsWith("-") ? `<span class="del">${l}</span>` :
+    l.startsWith("@@") || l.startsWith("diff ") ? `<span class="hd">${l}</span>` : l
+  ).join("\n");
+}
+
+async function showDetail(id) {
+  $("#detail-id").textContent = id;
+  $("#detail").innerHTML = `<div class="empty">loading…</div>`;
+  const [d, arts] = await Promise.all([
+    fetch(`/api/tasks/${id}`).then((r) => r.json()),
+    fetch(`/api/artifacts/${id}`).then((r) => r.json()).catch(() => []),
+  ]);
+
+  const messages = d.messages.map((m) => {
+    const label = m.role === "tool" ? `tool · ${esc(m.name)}` : m.role;
+    const calls = m.tool_calls
+      ? `<div class="faint">${esc(clip(m.tool_calls, 400))}</div>` : "";
+    return `<div class="msg role-${m.role}"><div class="lbl">${label}</div>
+      <pre>${esc(clip(m.content, 3000))}</pre>${calls}</div>`;
+  }).join("") || `<div class="empty">This task only coordinates — it made no model
+     calls of its own. Click a child in the tree above for its transcript.</div>`;
+
+  const diffs = arts.filter((a) => a.kind === "diff").map((a) => `
+    <div class="lbl">${a.id} · <span class="${a.review_status === "approved" ? "ok" : "bad"}">${a.review_status}</span>
+      ${a.review_notes ? "· " + esc(a.review_notes) : ""}</div>
+    <div class="diff"><pre>${diffHtml(clip(a.content, 20000))}</pre></div>`).join("");
+
+  $("#detail").innerHTML = `
+    <div class="lbl">delegation tree</div>
+    <ul class="tree">${d.tree ? treeHtml(d.tree) : "<li class='empty'>none</li>"}</ul>
+    ${diffs ? `<div class="lbl" style="margin-top:14px">artifacts</div>${diffs}` : ""}
+    <div class="lbl" style="margin-top:14px">transcript</div>${messages}`;
+
+  // Clicking a node in the tree drills into that subtask.
+  $("#detail").querySelectorAll(".node").forEach((el) => {
+    el.style.cursor = "pointer";
+    el.onclick = () => { selected = el.dataset.id; refreshTasks(); showDetail(selected); };
+  });
+}
+
+/* ---------- evals ---------- */
+async function refreshEvals() {
+  const e = await fetch("/api/evals").then((r) => r.json());
+  $("#board").innerHTML = e.scoreboard.map((r) => `<tr>
+    <td class="acc">${r.agent}</td><td class="faint">${r.model}</td>
+    <td>${r.run_label ?? "-"}</td>
+    <td class="${r.passed === r.n ? "ok" : "warn"}">${r.passed}/${r.n}</td>
+    <td>${(r.avg_score * 100).toFixed(0)}%</td>
+    <td>${r.tokens.toLocaleString()}</td><td>${r.avg_latency.toFixed(0)}ms</td></tr>`).join("")
+    || `<tr><td colspan="7" class="empty">no evals recorded — run: bolt eval baseline</td></tr>`;
+
+  $("#evalruns").innerHTML = e.runs.map((r) => {
+    let fails = [];
+    try { fails = JSON.parse(r.failures || "[]"); } catch {}
+    return `<tr><td>${r.eval_id}</td><td class="acc">${r.agent}</td>
+      <td class="faint">${clip(r.model, 22)}</td><td>${r.run_label ?? "-"}</td>
+      <td class="${r.passed ? "ok" : "bad"}">${r.passed ? "pass" : "fail"}</td>
+      <td>${r.tokens}</td><td>${r.latency_ms}</td>
+      <td class="faint">${esc(clip(fails.join("; "), 70))}</td></tr>`;
+  }).join("") || `<tr><td colspan="8" class="empty">none</td></tr>`;
+}
+
+
+
+
+/* ---------- attachments ----------
+   Uploads land in the workspace and are referred to by path, because every
+   vision and file tool already takes a path. */
+let attached = [];
+
+function renderAttachments() {
+  const box = $("#attachments");
+  box.hidden = attached.length === 0;
+  box.innerHTML = attached.map((a, i) => `
+    <span class="chip-file${a.pending ? " busy" : ""}">
+      <span class="kind">${a.pending ? "…" : esc(a.kind)}</span>
+      <span>${esc(a.name)}</span>
+      ${a.pending ? "" : `<button class="drop" data-i="${i}" title="Remove">✕</button>`}
+    </span>`).join("");
+  box.querySelectorAll(".drop").forEach((b) => b.onclick = () => {
+    attached.splice(Number(b.dataset.i), 1);
+    renderAttachments();
+  });
+}
+
+async function uploadFiles(files) {
+  for (const file of files) {
+    const entry = { name: file.name, pending: true };
+    attached.push(entry);
+    renderAttachments();
+
+    const body = new FormData();
+    body.append("file", file);
+    if (conversationId) body.append("conversation_id", conversationId);
+    try {
+      const res = await fetch("/api/files", { method: "POST", body });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || "upload failed");
+      Object.assign(entry, { pending: false, path: d.path, kind: d.kind });
+    } catch (err) {
+      attached = attached.filter((a) => a !== entry);
+      micStatus(`<span class="bad">${esc(file.name)}: ${esc(err.message || err)}</span>`);
+    }
+    renderAttachments();
+  }
+}
+
+$("#attach").onclick = () => $("#filepicker").click();
+$("#filepicker").onchange = (e) => {
+  uploadFiles([...e.target.files]);
+  e.target.value = "";
+};
+
+const panel = $("#chatpanel");
+let dragDepth = 0;          // dragenter/leave fire per child; count them
+panel.addEventListener("dragenter", (e) => {
+  if (![...e.dataTransfer.types].includes("Files")) return;
+  e.preventDefault();
+  if (++dragDepth === 1) panel.classList.add("dropping");
+});
+panel.addEventListener("dragover", (e) => {
+  if ([...e.dataTransfer.types].includes("Files")) e.preventDefault();
+});
+panel.addEventListener("dragleave", () => {
+  if (--dragDepth <= 0) { dragDepth = 0; panel.classList.remove("dropping"); }
+});
+panel.addEventListener("drop", (e) => {
+  if (![...e.dataTransfer.types].includes("Files")) return;
+  e.preventDefault();
+  dragDepth = 0;
+  panel.classList.remove("dropping");
+  uploadFiles([...e.dataTransfer.files]);
+});
+
+// Pasting a screenshot is the same gesture by another route.
+document.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length && view === "chat") uploadFiles(files);
+});
+
+function attachmentPreamble() {
+  const ready = attached.filter((a) => a.path);
+  if (!ready.length) return "";
+  const lines = ready.map((a) => `- ${a.path} (${a.kind})`).join("\n");
+  return `I have attached these files:\n${lines}\n\n`;
+}
+
+/* ---------- chat ---------- */
+let conversationId = null;
+let sending = false;
+
+// Deliberately small: enough markdown for a model reply to read well, without
+// pulling a parser into a page that must stay a single file.
+function markdown(text) {
+  // Enough markdown for a model reply to read well, without pulling a parser
+  // into a page that has to stay one file. Lines are grouped rather than split
+  // on blank lines, so consecutive bullets become one tight list.
+  const blocks = [];
+  let src = esc(text).replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _lang, code) => {
+    blocks.push(`<pre><code>${code.replace(/\n$/, "")}</code></pre>`);
+    return `\u0000${blocks.length - 1}\u0000`;
+  });
+
+  const inline = (t) => t
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<i>$2</i>");
+
+  const out = [];
+  let list = null;      // "ul" | "ol" while inside one
+  let para = [];
+
+  const flushPara = () => {
+    if (para.length) { out.push(`<p>${inline(para.join("<br>"))}</p>`); para = []; }
+  };
+  const flushList = () => {
+    if (list) { out.push(`</${list}>`); list = null; }
+  };
+
+  for (const raw of src.split("\n")) {
+    const line = raw.trimEnd();
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const placeholder = line.match(/^\s*\u0000(\d+)\u0000\s*$/);
+
+    if (placeholder) { flushPara(); flushList(); out.push(blocks[placeholder[1]]); continue; }
+    if (!line.trim()) { flushPara(); flushList(); continue; }
+
+    if (bullet || numbered) {
+      flushPara();
+      const kind = bullet ? "ul" : "ol";
+      if (list !== kind) { flushList(); out.push(`<${kind}>`); list = kind; }
+      out.push(`<li>${inline((bullet || numbered)[1])}</li>`);
+      continue;
+    }
+
+    // A wrapped continuation line belongs to the item above it. Without this the
+    // list is closed and reopened, so every numbered item restarts at 1.
+    if (list && /^\s+\S/.test(raw)) {
+      const previous = out.pop();
+      out.push(previous.replace(/<\/li>$/, ` ${inline(line.trim())}</li>`));
+      continue;
+    }
+
+    flushList();
+    para.push(line);
+  }
+  flushPara();
+  flushList();
+  return out.join("").replace(/\u0000(\d+)\u0000/g, (_m, i) => blocks[i]);
+}
+
+const ICONS = {
+  copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/>
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+  tick: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+    stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
+  up: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/>
+    <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>`,
+  down: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/>
+    <path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>`,
+  reply: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/>
+    <path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>`,
+  pencil: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/>
+    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`,
+};
+
+function iconButton(name, title, onClick, extraClass = "") {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = `act ${extraClass}`.trim();
+  b.title = title;
+  b.setAttribute("aria-label", title);
+  b.innerHTML = ICONS[name];
+  b.onclick = onClick;
+  return b;
+}
+
+// Copy, rate and reply, on every assistant message.
+function actionRow(turnId, content, agent, rating) {
+  const row = document.createElement("div");
+  row.className = "actions";
+
+  const copy = iconButton("copy", "Copy this reply", async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      // Clipboard access can be refused; fall back to a selection the user can copy.
+      const ta = document.createElement("textarea");
+      ta.value = content; document.body.appendChild(ta); ta.select();
+      document.execCommand("copy"); ta.remove();
+    }
+    copy.innerHTML = ICONS.tick;
+    copy.classList.add("done");
+    setTimeout(() => { copy.innerHTML = ICONS.copy; copy.classList.remove("done"); }, 1400);
+  });
+  row.appendChild(copy);
+
+  if (turnId) {
+    const up = iconButton("up", "Good reply", () => rate(turnId, "up", row));
+    const down = iconButton("down", "Poor reply — say what was wrong",
+                            () => rate(turnId, "down", row), "down");
+    if (rating === "up") up.classList.add("on");
+    if (rating === "down") down.classList.add("on");
+    row.append(up, down);
+    row.dataset.turnId = turnId;
+  }
+
+  row.appendChild(iconButton("reply", "Reply to this message",
+                             () => setReplyTo(turnId, content, agent)));
+  return row;
+}
+
+async function rate(turnId, rating, row, note = null) {
+  const [, up, down] = row.querySelectorAll(".act");
+  const already = (rating === "up" ? up : down).classList.contains("on");
+  const next = already && !note ? null : rating;   // clicking again clears it
+
+  up.classList.toggle("on", next === "up");
+  down.classList.toggle("on", next === "down");
+  row.parentElement.querySelector(".note-box")?.remove();
+
+  if (next !== "down") {
+    await fetch(`/api/turns/${turnId}/feedback`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rating: next }),
+    }).catch(() => {});
+    return;
+  }
+
+  // A thumbs-down reworks the answer rather than just recording a complaint.
+  showThinking();
+  noteStep("rethinking your question");
+  try {
+    const res = await fetch(`/api/turns/${turnId}/feedback`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rating: "down", note }),
+    });
+    const d = await res.json();
+    clearThinking();
+
+    if (d.needs_explanation) {
+      addTurn({ role: "assistant", content: d.reply, agent: d.agent,
+                turnId: d.new_turn_id });
+      $("#chatmeta").textContent = `gave up after ${d.attempts} attempts`;
+      $("#prompt").focus();
+      return;
+    }
+    if (d.retried) {
+      addTurn({ role: "assistant", content: d.reply, agent: d.agent,
+                turnId: d.new_turn_id, attempt: d.attempt });
+      $("#chatmeta").textContent = `attempt ${d.attempt} · ${d.model || ""} · ` +
+        `${d.tokens || 0} tokens`;
+      speakReply(d.reply);
+      // Only ask what was wrong when there are tries left to spend on the answer.
+      if (d.remaining > 0 && !note) askForNote(d.new_turn_id, null);
+      return;
+    }
+  } catch (err) {
+    clearThinking();
+    addTurn({ role: "assistant", content: `Could not rework that: ${err}` });
+  }
+}
+
+// Offered after a rework: saying what was wrong makes the next attempt better
+// than another blind retry.
+function askForNote(turnId, row) {
+  const anchor = row || $("#thread").lastElementChild?.querySelector(".actions");
+  if (!anchor) return;
+  anchor.parentElement.querySelector(".note-box")?.remove();
+
+  const box = document.createElement("div");
+  box.className = "note-box";
+  box.innerHTML = `<input placeholder="Still not right? Say what was wrong and it will try again">
+                   <button type="button">try again</button>`;
+  const [input, save] = box.children;
+  const submit = () => {
+    const note = input.value.trim();
+    box.remove();
+    if (note) rate(turnId, "down", anchor, note);
+  };
+  save.onclick = submit;
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") submit();
+    if (e.key === "Escape") box.remove();
+  };
+  anchor.after(box);
+  input.focus();
+  scrollThread();
+}
+
+let replyTo = null;
+
+function setReplyTo(turnId, content, agent) {
+  replyTo = turnId;
+  $("#replying").hidden = false;
+  $("#replying-text").textContent = `${agent || "bolt"}: ${content.slice(0, 90)}`;
+  $("#prompt").focus();
+}
+
+function clearReplyTo() {
+  replyTo = null;
+  $("#replying").hidden = true;
+}
+$("#replying-cancel").onclick = clearReplyTo;
+
+function addTurn({ role, content, agent, spoken, turnId, rating, attempt }) {
+  $("#thread").querySelector(".welcome")?.remove();
+  const el = document.createElement("div");
+  el.className = `turn ${role}`;
+  el.dataset.content = content;
+  if (turnId) el.dataset.turnId = turnId;
+  const stopped = content === "(stopped)";
+  el.innerHTML = `<div class="bubble${spoken ? " spoken" : ""}${stopped ? " stopped" : ""}">
+      ${role === "assistant"
+          ? `<div class="who">${esc(agent || "bolt")}${
+               attempt ? ` <span class="retry">attempt ${attempt}</span>` : ""}</div>`
+          : ""}
+      ${markdown(content)}</div>`;
+  if (role === "assistant" && !stopped) {
+    el.querySelector(".bubble").appendChild(actionRow(turnId, content, agent, rating));
+  }
+  $("#thread").appendChild(el);
+  markEditable();
+  scrollThread();
+  return el;
+}
+
+// Only the most recent user message can be edited: rewinding further would throw
+// away replies that later turns were built on.
+function markEditable() {
+  $("#thread").querySelectorAll(".edit").forEach((b) => b.remove());
+  if (sending) return;
+  const users = [...$("#thread").querySelectorAll(".turn.user")];
+  const last = users[users.length - 1];
+  if (!last) return;
+  const button = document.createElement("button");
+  button.className = "edit";
+  button.type = "button";
+  button.title = "Edit and resend";
+  button.setAttribute("aria-label", "Edit and resend this message");
+  button.innerHTML = ICONS.pencil;
+  button.onclick = editLast;
+  // Beside the bubble, not inside it, so it never overlaps the text.
+  last.insertBefore(button, last.firstChild);
+}
+
+async function editLast() {
+  if (sending || !conversationId) return;
+  const res = await fetch(`/api/conversations/${conversationId}/rewind`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const d = await res.json();
+  // Rebuild from what the server kept, so the two never disagree.
+  $("#thread").innerHTML = "";
+  (d.turns || []).forEach((t) =>
+    addTurn({ role: t.role, content: t.content, agent: t.agent }));
+  if (d.content) {
+    $("#prompt").value = d.content;
+    $("#prompt").focus();
+    $("#prompt").dispatchEvent(new Event("input"));
+  }
+  loadThreads();
+}
+
+function scrollThread() {
+  const t = $("#thread");
+  t.scrollTop = t.scrollHeight;
+}
+
+// While a reply streams it is appended into one live bubble, which the finished
+// response then replaces with properly rendered markdown.
+let streamTask = null;
+let streamText = "";
+
+function liveBubble() {
+  let el = document.getElementById("streaming");
+  if (!el) {
+    clearThinking();
+    el = document.createElement("div");
+    el.id = "streaming";
+    el.className = "turn assistant";
+    el.innerHTML = `<div class="bubble"><div class="who"></div><div class="live"></div></div>`;
+    $("#thread").appendChild(el);
+  }
+  return el;
+}
+
+function streamDelta(agent, text) {
+  const el = liveBubble();
+  el.querySelector(".who").textContent = agent || "bolt";
+  streamText += text;
+  // Rendering markdown on every token is wasteful and makes half-written code
+  // fences flicker; the finished reply is rendered properly a moment later.
+  el.querySelector(".live").textContent = streamText;
+  scrollThread();
+}
+
+function endStream() {
+  document.getElementById("streaming")?.remove();
+  streamTask = null;
+  streamText = "";
+}
+
+function showThinking() {
+  const el = document.createElement("div");
+  el.className = "turn assistant";
+  el.id = "thinking";
+  el.innerHTML = `<div class="bubble"><div class="thinking">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span id="thinking-step">working…</span></div></div>`;
+  $("#thread").appendChild(el);
+  scrollThread();
+}
+
+function clearThinking() { document.getElementById("thinking")?.remove(); }
+
+// The live trace already knows what the agents are doing; surface the useful
+// parts inside the bubble instead of making people watch another panel.
+function noteStep(text) {
+  const step = document.getElementById("thinking-step");
+  if (step) { step.textContent = text; scrollThread(); }
+}
+
+let inflight = null;      // AbortController for the reply being generated
+
+function setSending(on) {
+  sending = on;
+  if (!on) { streamTask = null; streamText = ""; }
+  $("#send").textContent = on ? "■" : "↑";
+  $("#send").title = on ? "Stop generating" : "Send";
+  $("#send").classList.toggle("stopping", on);
+  $("#prompt").disabled = false;         // you can keep typing the next message
+  markEditable();
+}
+
+async function stopGenerating() {
+  const body = new FormData();
+  if (conversationId) body.append("conversation_id", conversationId);
+  // Tell the server first: aborting only the browser request would leave the
+  // agent running, still spending tokens and still calling tools.
+  try { await fetch("/api/chat/stop", { method: "POST", body }); } catch {}
+  inflight?.abort();
+}
+
+// A proposed file change, shown as a diff with the decision left to the user.
+async function renderProposals(list) {
+  if (!list || !list.length) return;
+  const wrap = document.createElement("div");
+  wrap.className = "turn assistant";
+  wrap.innerHTML = `<div class="bubble proposals">
+      <div class="who">proposed changes — nothing is written until you apply</div></div>`;
+  const bubble = wrap.querySelector(".bubble");
+
+  for (const p of list) {
+    const card = document.createElement("div");
+    card.className = "proposal";
+    card.innerHTML = `
+      <div class="phead">
+        <span class="ppath">${esc(p.path.split("/").slice(-3).join("/"))}</span>
+        <span class="pstat">${p.existed ? "modified" : "new file"}
+          <span class="ok">+${p.added}</span> <span class="bad">-${p.removed}</span></span>
+        <span class="pacts">
+          <button type="button" class="apply">apply</button>
+          <button type="button" class="discard">discard</button>
+        </span>
+      </div>
+      <pre class="diff"><code>loading…</code></pre>`;
+    bubble.appendChild(card);
+
+    const detail = await fetch(`/api/proposals/${p.id}`).then((r) => r.json())
+      .catch(() => ({ diff: "(could not load diff)" }));
+    card.querySelector("code").innerHTML = diffHtml(detail.diff || "");
+
+    const acts = card.querySelector(".pacts");
+
+    // Applying is reversible: the previous contents are kept, so the button
+    // becomes an undo rather than the end of the story.
+    const undoable = () => {
+      acts.innerHTML = `<span class="ok">applied</span>
+                        <button type="button" class="undo">undo</button>`;
+      acts.querySelector(".undo").onclick = async () => {
+        acts.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        let r = await fetch(`/api/proposals/${p.id}/undo`, { method: "POST" });
+        if (r.status === 409) {
+          const { detail } = await r.json();
+          if (!confirm(`${detail}\n\nUndo anyway and lose those edits?`)) {
+            return undoable();
+          }
+          r = await fetch(`/api/proposals/${p.id}/undo?force=true`, { method: "POST" });
+        }
+        acts.innerHTML = r.ok
+          ? `<span class="faint">undone</span>`
+          : `<span class="bad">undo failed</span>`;
+      };
+    };
+
+    const decide = async (decision) => {
+      card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      let res = await fetch(`/api/proposals/${p.id}/${decision}`, { method: "POST" });
+
+      // The file changed after the agent read it — applying would overwrite work
+      // the agent never saw.
+      if (res.status === 409) {
+        const { detail } = await res.json();
+        if (!confirm(`${detail}\n\nApply anyway and overwrite those edits?`)) {
+          card.querySelectorAll("button").forEach((b) => (b.disabled = false));
+          return;
+        }
+        res = await fetch(`/api/proposals/${p.id}/${decision}?force=true`,
+                          { method: "POST" });
+      }
+      if (!res.ok) return (acts.innerHTML = `<span class="bad">failed</span>`);
+      if (decision === "apply") return undoable();
+      acts.innerHTML = `<span class="faint">discarded</span>`;
+    };
+    card.querySelector(".apply").onclick = () => decide("apply");
+    card.querySelector(".discard").onclick = () => decide("reject");
+  }
+
+  $("#thread").appendChild(wrap);
+  scrollThread();
+}
+
+async function send(text) {
+  if (sending) return stopGenerating();
+  const typed = (text ?? $("#prompt").value).trim();
+  const prompt = attachmentPreamble() + typed;
+  if (!typed && !attached.some((a) => a.path)) return;
+  setSending(true);
+  $("#prompt").value = "";
+  $("#prompt").style.height = "auto";
+  addTurn({ role: "user", content: prompt });
+  attached = [];
+  renderAttachments();
+  showThinking();
+
+  inflight = new AbortController();
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST", headers: { "content-type": "application/json" },
+      signal: inflight.signal,
+      body: JSON.stringify({ prompt, agent: $("#agent").value,
+                             conversation_id: conversationId, reply_to: replyTo }),
+    });
+    const d = await res.json();
+    endStream();
+    clearThinking();
+    clearReplyTo();
+    conversationId = d.conversation_id || conversationId;
+    addTurn({ role: "assistant", content: d.reply || "(no reply)", agent: d.agent,
+              turnId: d.turn_id });
+    if ($("#chattitle").textContent === "New conversation") {
+      $("#chattitle").textContent = prompt.slice(0, 60);
+    }
+    $("#chatmeta").textContent = d.stopped ? "stopped"
+      : `${d.model || ""} · ${d.tokens || 0} tokens`;
+    await renderProposals(d.proposals);
+    if (!d.stopped) speakReply(d.reply);
+    loadThreads();
+  } catch (err) {
+    endStream();
+    clearThinking();
+    if (err.name === "AbortError") {
+      addTurn({ role: "assistant", content: "(stopped)" });
+      $("#chatmeta").textContent = "stopped";
+    } else {
+      addTurn({ role: "assistant", content: `Request failed: ${err}` });
+    }
+  } finally {
+    inflight = null;
+    setSending(false);
+  }
+}
+
+$("#send").onclick = () => send();
+$("#prompt").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+$("#prompt").addEventListener("input", (e) => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 180) + "px";
+});
+document.querySelectorAll(".chip").forEach((c) => c.onclick = () => send(c.textContent));
+
+$("#newchat").onclick = () => {
+  conversationId = null;
+  clearReplyTo();
+  $("#chattitle").textContent = "New conversation";
+  $("#chatmeta").textContent = "";
+  $("#thread").innerHTML = `<div class="welcome">
+      <canvas id="waves-hero" width="360" height="96"></canvas>
+      <h3>Bolt</h3>
+      <p class="faint">Ask anything, or hold the mic and say “Bolt, …”.</p></div>`;
+  const hero = new Waves($("#waves-hero"));
+  hero.setLevel(0.16); hero.start();
+  loadThreads();
+};
+
+async function loadThreads() {
+  const rows = await fetch("/api/conversations?limit=40").then((r) => r.json());
+  $("#threadlist").innerHTML = rows.map((c) => `
+    <div class="thread-item ${c.id === conversationId ? "on" : ""}" data-id="${c.id}">
+      <span>${esc(c.title || "untitled")}</span>
+      <span class="x" data-del="${c.id}">✕</span>
+    </div>`).join("") || `<div class="empty">no conversations yet</div>`;
+
+  $("#threadlist").querySelectorAll(".thread-item").forEach((el) => {
+    el.onclick = (e) => {
+      if (e.target.dataset.del) return;
+      openThread(el.dataset.id);
+    };
+  });
+  $("#threadlist").querySelectorAll("[data-del]").forEach((el) => {
+    el.onclick = async (e) => {
+      e.stopPropagation();
+      await fetch(`/api/conversations/${el.dataset.del}`, { method: "DELETE" });
+      if (conversationId === el.dataset.del) $("#newchat").onclick();
+      else loadThreads();
+    };
+  });
+}
+
+async function openThread(id) {
+  clearReplyTo();
+  const d = await fetch(`/api/conversations/${id}`).then((r) => r.json());
+  conversationId = id;
+  $("#chattitle").textContent = d.conversation.title || "conversation";
+  $("#chatmeta").textContent = `${d.turns.length} turns`;
+  $("#thread").innerHTML = "";
+  const feedback = d.feedback || {};
+  // Consecutive assistant turns answer the same question — they are reworks, so
+  // number them the way they were numbered when they arrived.
+  let attempt = 0;
+  d.turns.forEach((t) => {
+    attempt = t.role === "assistant" ? attempt + 1 : 0;
+    addTurn({
+      role: t.role, content: t.content, agent: t.agent, turnId: t.id,
+      rating: feedback[t.id]?.rating,
+      attempt: t.role === "assistant" && attempt > 1 ? attempt : null,
+    });
+  });
+  markEditable();
+  loadThreads();
+}
+
+
+/* ---------- appearance ----------
+   Themes are applied as CSS custom properties from here rather than as a wall of
+   CSS combinations: every palette needs a light and a dark set, and mode can be
+   system, so the CSS would be three rules per palette to say the same thing. */
+/* Palettes are derived from a few seeds rather than written out by hand: sixteen
+   themes times two modes times eleven tokens is far too many values to keep
+   consistent, and a derived set stays in tune when one seed changes. */
+function makePalette(name, seed) {
+  const { bgHue, bgSat = 12, accent, second, third, warmth = 0 } = seed;
+
+  /* Hex, not hsl(): backgrounds build translucent variants by appending two hex
+     digits (`${t.accent}22`), and that suffix is meaningless on an hsl() string —
+     it produces invalid CSS that the browser drops without a word. */
+  const hsl = (h, sat, light) => {
+    const s = sat / 100, l = light / 100;
+    const k = (n) => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const channel = (n) => {
+      const value = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+      return Math.round(255 * value).toString(16).padStart(2, "0");
+    };
+    return `#${channel(0)}${channel(8)}${channel(4)}`;
+  };
+
+  return {
+    name,
+    hues: [accent, second, third],
+    dark: {
+      bg:     hsl(bgHue, bgSat, 6 + warmth),
+      panel:  hsl(bgHue, bgSat - 1, 11 + warmth),
+      panel2: hsl(bgHue, bgSat, 8.5 + warmth),
+      line:   hsl(bgHue, bgSat - 2, 19 + warmth),
+      text:   hsl(bgHue, 18, 92),
+      dim:    hsl(bgHue, 12, 68),
+      faint:  hsl(bgHue, 10, 48),
+      accent: hsl(accent, 72, 68),
+      purple: hsl(second, 62, 70),
+      ok:     hsl(142, 55, 66),
+      bad:    hsl(354, 76, 72),
+      warn:   hsl(38, 68, 64),
+    },
+    light: {
+      bg:     hsl(bgHue, Math.max(bgSat - 4, 6), 96),
+      panel:  hsl(bgHue, 30, 100),
+      panel2: hsl(bgHue, Math.max(bgSat - 2, 8), 93),
+      line:   hsl(bgHue, Math.max(bgSat - 3, 8), 85),
+      text:   hsl(bgHue, 22, 13),
+      dim:    hsl(bgHue, 12, 38),
+      faint:  hsl(bgHue, 10, 56),
+      accent: hsl(accent, 62, 38),
+      purple: hsl(second, 52, 42),
+      ok:     hsl(142, 52, 30),
+      bad:    hsl(354, 60, 42),
+      warn:   hsl(34, 70, 30),
+    },
+  };
+}
+
+const PALETTES = {
+  midnight: makePalette("Midnight", { bgHue: 222, bgSat: 14, accent: 222, second: 268, third: 196 }),
+  slate:    makePalette("Slate",    { bgHue: 210, bgSat: 8,  accent: 205, second: 230, third: 186 }),
+  ember:    makePalette("Ember",    { bgHue: 22,  bgSat: 16, accent: 26,  second: 12,  third: 42, warmth: 1 }),
+  forest:   makePalette("Forest",   { bgHue: 158, bgSat: 14, accent: 162, second: 186, third: 138 }),
+  plum:     makePalette("Plum",     { bgHue: 282, bgSat: 16, accent: 286, second: 316, third: 258 }),
+  ocean:    makePalette("Ocean",    { bgHue: 198, bgSat: 18, accent: 192, second: 210, third: 172 }),
+  rose:     makePalette("Rose",     { bgHue: 342, bgSat: 14, accent: 342, second: 318, third: 8,  warmth: 1 }),
+  sand:     makePalette("Sand",     { bgHue: 38,  bgSat: 14, accent: 36,  second: 22,  third: 52, warmth: 1 }),
+  mint:     makePalette("Mint",     { bgHue: 168, bgSat: 12, accent: 168, second: 148, third: 190 }),
+  indigo:   makePalette("Indigo",   { bgHue: 248, bgSat: 18, accent: 250, second: 274, third: 218 }),
+  amber:    makePalette("Amber",    { bgHue: 44,  bgSat: 16, accent: 44,  second: 28,  third: 62, warmth: 1 }),
+  teal:     makePalette("Teal",     { bgHue: 184, bgSat: 16, accent: 184, second: 200, third: 164 }),
+  crimson:  makePalette("Crimson",  { bgHue: 356, bgSat: 16, accent: 356, second: 334, third: 18, warmth: 1 }),
+  moss:     makePalette("Moss",     { bgHue: 104, bgSat: 12, accent: 108, second: 88,  third: 146 }),
+  violet:   makePalette("Violet",   { bgHue: 266, bgSat: 14, accent: 268, second: 292, third: 236 }),
+  graphite: makePalette("Graphite", { bgHue: 240, bgSat: 4,  accent: 212, second: 240, third: 190 }),
+  olive:    makePalette("Olive",    { bgHue: 76,  bgSat: 14, accent: 80,  second: 58,  third: 120, warmth: 1 }),
+  jade:     makePalette("Jade",     { bgHue: 140, bgSat: 14, accent: 142, second: 168, third: 112 }),
+  fuchsia:  makePalette("Fuchsia",  { bgHue: 316, bgSat: 16, accent: 318, second: 288, third: 344 }),
+  steel:    makePalette("Steel",    { bgHue: 202, bgSat: 6,  accent: 200, second: 224, third: 178 }),
+};
+
+
+/* Chat backgrounds are generated from the active palette rather than shipped as
+   image files: forty images would be megabytes, would need a light and a dark
+   version each, and would clash the moment the theme changed. These are CSS, so
+   they re-tint themselves. */
+const BACKGROUNDS = [
+  // Sixteen that actually read well behind a conversation. The rest were
+  // variations of these that only made the grid longer to scan.
+  { id: "none", name: "None", group: "Plain", css: () => "none" },
+
+  // --- washes: soft light from one or more directions ---
+  { id: "dawn",     name: "Dawn",     group: "Wash",
+    css: (t) => `radial-gradient(120% 90% at 15% 0%, ${t.accent}22, transparent 60%)` },
+  { id: "halo",     name: "Halo",     group: "Wash",
+    css: (t) => `radial-gradient(70% 55% at 50% 42%, ${t.accent}1f, transparent 70%)` },
+  { id: "twin",     name: "Twin",     group: "Wash",
+    css: (t) => `radial-gradient(60% 60% at 12% 18%, ${t.accent}22, transparent 60%),
+                 radial-gradient(60% 60% at 88% 82%, ${t.purple}22, transparent 60%)` },
+  { id: "aurora",   name: "Aurora",   group: "Wash",
+    css: (t) => `radial-gradient(80% 50% at 20% 0%, ${t.accent}2a, transparent 55%),
+                 radial-gradient(70% 45% at 78% 12%, ${t.ok}1c, transparent 55%),
+                 radial-gradient(90% 60% at 50% 100%, ${t.purple}20, transparent 60%)` },
+  { id: "spotlight", name: "Spotlight", group: "Wash",
+    css: (t) => `radial-gradient(45% 38% at 50% 0%, ${t.accent}30, transparent 70%)` },
+
+  // --- geometry: repeating structure ---
+  { id: "dots",     name: "Dots",     group: "Pattern",
+    css: (t) => `radial-gradient(${t.line} 1px, transparent 1px)`, size: "20px 20px" },
+  { id: "grid",     name: "Grid",     group: "Pattern",
+    css: (t) => `linear-gradient(${t.line}66 1px, transparent 1px),
+                 linear-gradient(90deg, ${t.line}66 1px, transparent 1px)`,
+    size: "26px 26px" },
+  { id: "diagonal", name: "Diagonal", group: "Pattern",
+    css: (t) => `repeating-linear-gradient(45deg, ${t.line}33 0 1px, transparent 1px 12px)` },
+  { id: "cross",    name: "Crosshatch", group: "Pattern",
+    css: (t) => `repeating-linear-gradient(45deg, ${t.line}26 0 1px, transparent 1px 14px),
+                 repeating-linear-gradient(-45deg, ${t.line}26 0 1px, transparent 1px 14px)` },
+  { id: "carbon",   name: "Carbon",   group: "Pattern",
+    css: (t) => `repeating-linear-gradient(45deg, ${t.panel2} 0 2px, transparent 2px 5px)` },
+  { id: "blueprint", name: "Blueprint", group: "Tinted",
+    css: (t) => `linear-gradient(${t.accent}22 1px, transparent 1px),
+                 linear-gradient(90deg, ${t.accent}22 1px, transparent 1px),
+                 linear-gradient(${t.accent}11 1px, transparent 1px),
+                 linear-gradient(90deg, ${t.accent}11 1px, transparent 1px)`,
+    size: "80px 80px, 80px 80px, 16px 16px, 16px 16px" },
+  { id: "starfield", name: "Starfield", group: "Tinted",
+    css: (t) => `radial-gradient(${t.accent}55 1px, transparent 1px),
+                 radial-gradient(${t.purple}33 1px, transparent 1px)`,
+    size: "70px 70px, 110px 110px" },
+  { id: "topo",     name: "Contour",  group: "Tinted",
+    css: (t) => `repeating-radial-gradient(circle at 30% 40%, transparent 0 18px, ${t.accent}12 18px 19px)` },
+  { id: "mesh",     name: "Mesh",     group: "Tinted",
+    css: (t) => `radial-gradient(40% 40% at 20% 25%, ${t.accent}26, transparent 60%),
+                 radial-gradient(35% 35% at 75% 30%, ${t.purple}22, transparent 60%),
+                 radial-gradient(45% 45% at 55% 85%, ${t.ok}18, transparent 60%)` },
+  { id: "vignette", name: "Vignette", group: "Tinted",
+    css: (t) => `radial-gradient(120% 100% at 50% 50%, transparent 45%, ${t.bg} 100%),
+                 radial-gradient(80% 60% at 50% 20%, ${t.accent}1e, transparent 70%)` },
+];
+
+const APPEARANCE_KEY = "bolt-appearance-v1";
+let appearance = { mode: "system", palette: "midnight", background: "none" };
+
+function readAppearance() {
+  try {
+    return { ...appearance, ...JSON.parse(localStorage.getItem(APPEARANCE_KEY) || "{}") };
+  } catch {
+    return { ...appearance };
+  }
+}
+
+function effectiveMode(mode) {
+  if (mode !== "system") return mode;
+  return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function applyAppearance() {
+  const palette = PALETTES[appearance.palette] || PALETTES.midnight;
+  const tokens = palette[effectiveMode(appearance.mode)];
+  const root = document.documentElement;
+  for (const [key, value] of Object.entries(tokens)) {
+    root.style.setProperty(`--${key}`, value);
+  }
+  // Native controls (scrollbars, the agent select) follow this rather than the OS.
+  root.style.colorScheme = effectiveMode(appearance.mode);
+  document.querySelectorAll("#mode-picker button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.mode === appearance.mode));
+  document.querySelectorAll(".palette").forEach((b) =>
+    b.classList.toggle("on", b.dataset.palette === appearance.palette));
+  applyBackground();
+}
+
+function saveAppearance() {
+  try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(appearance)); } catch {}
+}
+
+function buildPalettePicker() {
+  $("#palette-picker").innerHTML = Object.entries(PALETTES).map(([id, p]) => {
+    const preview = p[effectiveMode(appearance.mode)];
+    return `<button type="button" class="palette" data-palette="${id}">
+      <span class="swatch">
+        <i style="background:${preview.bg}"></i>
+        <i style="background:${preview.accent}"></i>
+        <i style="background:${preview.purple}"></i>
+      </span>${p.name}</button>`;
+  }).join("");
+  $("#palette-picker").querySelectorAll(".palette").forEach((b) => b.onclick = () => {
+    appearance.palette = b.dataset.palette;
+    saveAppearance();
+    applyAppearance();
+    buildPalettePicker();
+    buildBackgroundPicker();
+  });
+}
+
+$("#gear").onclick = async () => {
+  if (!photoBackgrounds.length) await loadPhotoBackgrounds();
+  buildPalettePicker();
+  buildBackgroundPicker();
+  applyAppearance();
+  $("#appearance").hidden = false;
+  showSettingsPane(settingsPane);
+};
+
+/* ---------- settings sections ---------- */
+let settingsPane = "usage";
+function showSettingsPane(name) {
+  settingsPane = name;
+  document.querySelectorAll(".snav").forEach((b) =>
+    b.classList.toggle("on", b.dataset.pane === name));
+  $("#pane-appearance").hidden = name !== "appearance";
+  $("#pane-voice").hidden = name !== "voice";
+  $("#pane-connection").hidden = name !== "connection";
+  $("#pane-agents").hidden = name !== "agents";
+  $("#pane-usage").hidden = name !== "usage";
+  // "Use an image" belongs to Appearance; it would be nonsense next to Usage.
+  $("#settings-heading").textContent = {
+    usage: "Usage", voice: "Voice", connection: "Connection", agents: "Agents",
+  }[name] || "Appearance";
+  $(".settings-body").scrollTop = 0;
+  if (name === "usage") loadUsage();
+  if (name === "voice") loadVoiceSettings();
+  if (name === "connection") loadConnection();
+  if (name === "agents") loadAgentEditor();
+}
+document.querySelectorAll(".snav").forEach((b) =>
+  b.onclick = () => showSettingsPane(b.dataset.pane));
+
+/* ---------- connection ---------- */
+/* The key is written to the server's settings table and never sent back: the
+   dashboard only ever sees a mask, so a shared screen cannot leak it. */
+let knownModels = [];
+async function loadConnection() {
+  const c = await fetch("/api/settings/ollama").then((r) => r.json()).catch(() => null);
+  if (!c) { $("#ollama-result").textContent = "Could not read settings."; return; }
+  $("#ollama-url").value = c.base_url || "";
+  $("#ollama-url").placeholder = c.default_url || "";
+  explainUrl();
+  showKeyState(c);
+  testConnection();
+}
+
+/* An endpoint URL means nothing on its own — say what this one actually is. */
+function explainUrl() {
+  const url = $("#ollama-url").value.trim();
+  const what =
+    /host\.docker\.internal/.test(url)
+      ? "This one reaches the Ollama app running on your Mac from inside Bolt's container."
+    : /(localhost|127\.0\.0\.1)/.test(url)
+      ? "This one is Ollama running on this machine."
+    : /ollama\.com/.test(url)
+      ? "This is Ollama's cloud directly — it serves more models than the local app proxies, and needs your API key."
+    : url ? "A custom endpoint." : "";
+  $("#url-explain").textContent = what ? what + " " : "";
+}
+$("#ollama-url").addEventListener("input", explainUrl);
+document.querySelectorAll(".linkish[data-url]").forEach((b) => b.onclick = () => {
+  $("#ollama-url").value = b.dataset.url;
+  explainUrl();
+});
+
+/* A saved key must look saved. An empty password box that silently means "keep
+   the old one" is indistinguishable from having no key at all. */
+function showKeyState(c) {
+  const input = $("#ollama-key");
+  if (c.key_set) {
+    input.type = "text";
+    input.value = c.key_masked;
+    input.readOnly = true;
+    input.classList.add("saved");
+    $("#key-replace").hidden = false;
+    $("#key-remove").hidden = false;
+    $("#ollama-keystate").innerHTML = "<b>Key saved.</b> It is stored on the server and never shown in full.";
+  } else {
+    input.type = "password";
+    input.value = "";
+    input.readOnly = false;
+    input.classList.remove("saved");
+    input.placeholder = "paste your Ollama key";
+    $("#key-replace").hidden = true;
+    $("#key-remove").hidden = true;
+    $("#ollama-keystate").textContent = c.from_env
+      ? "Using OLLAMA_API_KEY from the environment."
+      : "No key saved. A local Ollama does not need one; the cloud endpoint does.";
+  }
+}
+$("#key-replace").onclick = () => {
+  const input = $("#ollama-key");
+  input.type = "password"; input.value = ""; input.readOnly = false;
+  input.classList.remove("saved");
+  input.placeholder = "paste the new key";
+  input.focus();
+  $("#key-replace").hidden = true;
+  $("#ollama-keystate").textContent = "Enter a new key, then Save & connect.";
+};
+$("#key-remove").onclick = async () => {
+  await fetch("/api/settings/ollama", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: "" }),
+  });
+  loadConnection();
+};
+
+async function testConnection() {
+  const note = $("#ollama-result");
+  note.classList.remove("warn");
+  note.textContent = "Checking…";
+  let r;
+  try { r = await fetch("/api/settings/ollama/test", { method: "POST" }).then((x) => x.json()); }
+  catch (e) { note.classList.add("warn"); note.textContent = String(e); return; }
+  if (!r.ok) {
+    note.classList.add("warn");
+    note.textContent = `Not connected: ${r.error}`;
+    $("#model-list").innerHTML = "";
+    return;
+  }
+  knownModels = r.known || [];
+  note.innerHTML = `Connected to <b>${esc(r.base_url)}</b> — ${r.models.length} model${
+    r.models.length === 1 ? "" : "s"} available.`;
+  renderModels(r.models, r.known || []);
+}
+
+function renderModels(serving, known) {
+  const rows = serving.map((m) => {
+    const inCatalogue = known.includes(m);
+    return `<div class="rowcard">
+      <div class="grow"><b>${esc(m)}</b>
+        <i>${inCatalogue ? "in Bolt's catalogue" : "not configured — agents cannot pick it"}</i></div>
+      ${inCatalogue ? '<span class="tag ok">ready</span>'
+                    : `<button type="button" class="model-add" data-model="${esc(m)}">Add</button>`}
+    </div>`;
+  });
+  // A model in the catalogue the endpoint no longer serves is worth saying out loud.
+  known.filter((k) => !serving.includes(k)).forEach((k) => rows.push(
+    `<div class="rowcard"><div class="grow"><b>${esc(k)}</b>
+       <i>configured but not served by this endpoint</i></div>
+     <span class="tag">missing</span></div>`));
+  $("#model-list").innerHTML = rows.join("") ||
+    '<p class="faint" style="font-size:12px">No models reported.</p>';
+  document.querySelectorAll(".model-add").forEach((b) => b.onclick = async () => {
+    b.disabled = true;
+    await fetch("/api/models/catalogue", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: b.dataset.model }),
+    });
+    testConnection();
+  });
+}
+
+$("#ollama-save").onclick = async () => {
+  const btn = $("#ollama-save");
+  btn.disabled = true; btn.textContent = "Connecting…";
+  const body = { base_url: $("#ollama-url").value.trim() };
+  const key = $("#ollama-key").value.trim();
+  // A read-only box is showing the mask, not a key — never send that back.
+  if (key && !$("#ollama-key").readOnly) body.api_key = key;
+  try {
+    const r = await fetch("/api/settings/ollama", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((x) => x.json());
+    const note = $("#ollama-result");
+    note.classList.toggle("warn", !r.ok);
+    note.innerHTML = r.ok
+      ? `Connected to <b>${esc(r.base_url)}</b> — ${r.models.length} models available.`
+      : `Not connected: ${esc(r.error)}`;
+    if (r.ok) renderModels(r.models, r.known || []);
+    loadConnection();
+    loadAgents();                          // resolved models may have changed
+  } finally { btn.disabled = false; btn.textContent = "Save & connect"; }
+};
+
+/* ---------- agents ---------- */
+let allTools = [];
+async function loadAgentEditor() {
+  const [agents, tools] = await Promise.all([
+    fetch("/api/agents").then((r) => r.json()),
+    allTools.length ? Promise.resolve(allTools) : fetch("/api/tools").then((r) => r.json()),
+  ]);
+  allTools = tools;
+  $("#agent-editor").hidden = true;
+  $("#agent-list").innerHTML = agents.map((a) => `
+    <div class="rowcard">
+      <div class="grow"><b>${esc(a.name)}</b><i>${esc(a.blurb || "no description")}</i></div>
+      <span class="tag">${esc(a.resolved_model || a.model)}</span>
+      ${a.builtin ? "" : '<span class="tag ok">yours</span>'}
+      <button type="button" class="agent-edit" data-agent="${esc(a.name)}">Edit</button>
+    </div>`).join("");
+  document.querySelectorAll(".agent-edit").forEach((b) => b.onclick = () =>
+    editAgent(agents.find((a) => a.name === b.dataset.agent)));
+}
+
+function editAgent(agent) {
+  const isNew = !agent;
+  const a = agent || { name: "", blurb: "", model: "auto", system_prompt: "",
+                       tools: [], temperature: 0.2, max_iterations: 8, builtin: false };
+  const modelOptions = ["auto", ...knownModels].map((m) =>
+    `<option value="${esc(m)}"${m === a.model ? " selected" : ""}>${esc(m)}</option>`).join("");
+  $("#agent-editor").hidden = false;
+  $("#agent-editor").innerHTML = `
+    <p class="setting-label">${isNew ? "New agent" : `Editing ${esc(a.name)}`}</p>
+    <div class="field"><label for="ag-name">Name</label>
+      <input id="ag-name" type="text" value="${esc(a.name)}" ${isNew ? "" : "disabled"}
+             placeholder="one word, e.g. tester"></div>
+    <div class="field"><label for="ag-blurb">Description</label>
+      <input id="ag-blurb" type="text" value="${esc(a.blurb || "")}"
+             placeholder="what this agent is for — shown in the picker"></div>
+    <div class="field"><label for="ag-model">Model</label>
+      <select id="ag-model">${modelOptions}</select></div>
+    <div class="field"><label for="ag-temp">Temperature</label>
+      <input id="ag-temp" type="number" step="0.1" min="0" max="2" value="${a.temperature}"></div>
+    <div class="field"><label for="ag-iter">Max steps</label>
+      <input id="ag-iter" type="number" min="1" max="40" value="${a.max_iterations}"></div>
+    <p class="setting-label">Tools</p>
+    <div class="toolgrid">${allTools.map((t) => `
+      <label title="${esc(t.description)}">
+        <input type="checkbox" class="ag-tool" value="${esc(t.name)}"
+               ${(a.tools || []).includes(t.name) ? "checked" : ""}>${esc(t.name)}</label>`).join("")}</div>
+    <p class="setting-label">Instructions</p>
+    <div class="field"><textarea id="ag-prompt"
+      placeholder="Who this agent is and how it should work.">${esc(a.system_prompt || "")}</textarea></div>
+    <div class="field-actions">
+      <span class="faint" id="ag-status"></span>
+      ${isNew ? "" : `<button type="button" id="agent-delete">${
+        a.builtin ? "Reset to default" : "Delete"}</button>`}
+      <button type="button" id="agent-cancel">Cancel</button>
+      <button type="button" id="agent-save">Save</button>
+    </div>`;
+  $("#agent-editor").scrollIntoView({ block: "nearest" });
+
+  $("#agent-cancel").onclick = () => ($("#agent-editor").hidden = true);
+  const del = $("#agent-delete");
+  if (del) del.onclick = async () => {
+    await fetch(`/api/agents/${encodeURIComponent(a.name)}`, { method: "DELETE" });
+    await loadAgentEditor(); loadAgents();
+  };
+  $("#agent-save").onclick = async () => {
+    const name = (isNew ? $("#ag-name").value : a.name).trim().toLowerCase();
+    const body = {
+      blurb: $("#ag-blurb").value.trim(),
+      model: $("#ag-model").value,
+      system_prompt: $("#ag-prompt").value.trim(),
+      tools: [...document.querySelectorAll(".ag-tool:checked")].map((c) => c.value),
+      temperature: parseFloat($("#ag-temp").value),
+      max_iterations: parseInt($("#ag-iter").value, 10),
+    };
+    const r = await fetch(`/api/agents/${encodeURIComponent(name)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      $("#ag-status").textContent = err.detail || `Could not save (${r.status})`;
+      return;
+    }
+    await loadAgentEditor();
+    loadAgents();                 // the composer picker rebuilds with the change
+  };
+}
+$("#agent-new").onclick = () => editAgent(null);
+
+/* ---------- voice settings ---------- */
+async function loadVoiceSettings() {
+  $("#voice-speakback").checked = $("#speakback").checked;
+  $("#voice-speakback").disabled = $("#speakback").disabled;
+  try {
+    const c = await fetch("/api/voice/control").then((r) => r.json());
+    $("#voice-enabled").checked = c.enabled !== false;
+  } catch { $("#voice-enabled").checked = false; }
+  try {
+    const v = await fetch("/api/voice/status").then((r) => r.json());
+    $("#voice-detail").innerHTML =
+      `Speech to text: <b>${v.stt ? "ready" : "unavailable"}</b>${v.stt ? "" : ` — ${esc(v.stt_detail || "")}`}<br>` +
+      `Text to speech: <b>${v.tts ? "ready" : "unavailable"}</b>${v.tts ? "" : ` — ${esc(v.tts_detail || "")}`}<br>` +
+      `ffmpeg: <b>${v.ffmpeg ? "found" : "missing"}</b>. Everything runs locally; no audio leaves this machine.`;
+  } catch (e) {
+    $("#voice-detail").textContent = "Could not read voice status.";
+  }
+}
+$("#voice-enabled").onchange = async (e) => {
+  const on = e.target.checked;
+  const body = new FormData();
+  body.append("enabled", on ? "true" : "false");
+  try { await fetch("/api/voice/enabled", { method: "POST", body }); }
+  catch { e.target.checked = !on; return; }
+  applyVoiceEnabled(on);
+};
+$("#voice-speakback").onchange = (e) => { $("#speakback").checked = e.target.checked; };
+$("#speakback").addEventListener("change", () => {
+  $("#voice-speakback").checked = $("#speakback").checked;
+});
+// The mic is pointless while voice is off, and a disabled control says so
+// better than a button that quietly does nothing.
+function applyVoiceEnabled(on) {
+  $("#mic").disabled = !on || $("#mic").dataset.unsupported === "1";
+  $("#mic").title = on ? "Speak" : "Voice is switched off in settings";
+}
+
+/* Ollama publishes no credit or quota endpoint — cloud calls are signed by the
+   daemon's own key, and a session limit only appears as a 429 when you hit it.
+   So Usage reports our own accounting from the runs table, and says so. */
+const nf = (n) => Number(n || 0).toLocaleString();
+const pct = (v) => `${(Math.max(0, Math.min(1, v || 0)) * 100).toFixed(1)}%`;
+
+/* Ollama's own limits, from the account the saved key belongs to. This is the
+   real allowance; everything below it is Bolt's local accounting. */
+function cloudUsageHtml(c) {
+  if (!c || !c.ok) {
+    return `<div class="usage-note${c && c.reason === "no_key" ? "" : " warn"}">${
+      esc((c && c.error) || "Could not read cloud usage.")}</div>`;
+  }
+  const bar = (title, block) => {
+    if (!block) return "";
+    const used = block.usage || 0;
+    const models = (block.models || [])
+      .sort((a, b) => b.request_count - a.request_count)
+      .map((m) => `${esc(m.name)} ${m.request_count.toLocaleString()}`).join(" · ");
+    return `<div class="limit">
+      <div class="limit-top"><b>${title}</b><span>${pct(used)} used</span></div>
+      <div class="limit-bar"><i class="${used >= 0.9 ? "hot" : ""}"
+           style="width:${pct(used)}"></i></div>
+      ${models ? `<p class="limit-models">${models}</p>` : ""}
+    </div>`;
+  };
+  const limits = c.limits || {};
+  const spend = c.activity && c.activity.cost;
+  return bar("Session usage", limits.session) + bar("Weekly usage", limits.weekly) +
+    (spend !== undefined
+      ? `<p class="limit-models">Pay-as-you-go spend over the last four weeks: $${esc(spend)}.
+         Ollama does not publish reset times over the API.</p>` : "");
+}
+
+async function loadUsage() {
+  const body = $("#usage-body");
+  const btn = $("#usage-refresh");
+  // A refresh keeps the numbers on screen and dims them. Blanking the section
+  // and rebuilding it reads as the data having been lost.
+  const first = !body.firstElementChild;
+  if (first) body.innerHTML = '<p class="faint" style="font-size:12px">Loading…</p>';
+  body.classList.add("busy");
+  btn.disabled = true;
+  btn.textContent = "Refreshing…";
+  const done = () => {
+    body.classList.remove("busy");
+    btn.disabled = false;
+    btn.textContent = "Refresh";
+  };
+
+  let u;
+  try { u = await fetch("/api/usage?days=30").then((r) => r.json()); }
+  catch (e) {
+    body.innerHTML = `<p class="usage-note warn">Could not read usage: ${esc(e.message)}</p>`;
+    done();
+    return;
+  }
+
+  const cloud = await fetch("/api/usage/cloud").then((r) => r.json()).catch(() => null);
+  const t = u.totals || {};
+  const tokens = (t.prompt_tokens || 0) + (t.completion_tokens || 0);
+  const days = u.by_day || [];
+  const peak = Math.max(1, ...days.map((d) => d.tokens || 0));
+
+  body.innerHTML = `
+    ${cloudUsageHtml(cloud)}
+
+    <p class="setting-label">Bolt, last 30 days</p>
+    <div class="usage-tiles">
+      <div class="usage-tile"><b>${nf(tokens)}</b><span>tokens</span></div>
+      <div class="usage-tile"><b>${nf(t.calls)}</b><span>model calls</span></div>
+      <div class="usage-tile"><b>${nf(t.prompt_tokens)}</b><span>sent</span></div>
+      <div class="usage-tile"><b>${nf(t.completion_tokens)}</b><span>received</span></div>
+    </div>
+
+    <p class="setting-label">Tokens per day</p>
+    <div class="usage-bars">${days.map((d) =>
+      `<i style="height:${Math.max(2, Math.round((d.tokens / peak) * 74))}px"
+          title="${d.day}: ${nf(d.tokens)} tokens in ${nf(d.calls)} calls"></i>`).join("")
+      || '<span class="faint" style="font-size:12px">Nothing yet.</span>'}</div>
+
+    <p class="setting-label">By model</p>
+    <table class="usage-table"><thead><tr>
+      <th>Model</th><th style="text-align:right">Calls</th>
+      <th style="text-align:right">Tokens</th><th style="text-align:right">Avg</th>
+    </tr></thead><tbody>${(u.by_model || []).map((m) => `<tr>
+      <td>${esc(m.model)}</td>
+      <td class="num">${nf(m.calls)}</td>
+      <td class="num">${nf((m.prompt_tokens || 0) + (m.completion_tokens || 0))}</td>
+      <td class="num">${Math.round(m.avg_latency_ms || 0)} ms</td>
+    </tr>`).join("") || '<tr><td colspan="4" class="faint">No calls yet.</td></tr>'}</tbody></table>
+
+    <p class="setting-label">By agent</p>
+    <table class="usage-table"><thead><tr>
+      <th>Agent</th><th style="text-align:right">Calls</th><th style="text-align:right">Tokens</th>
+    </tr></thead><tbody>${(u.by_agent || []).map((a) => `<tr>
+      <td>${esc(a.agent)}</td><td class="num">${nf(a.calls)}</td>
+      <td class="num">${nf(a.tokens)}</td>
+    </tr>`).join("") || '<tr><td colspan="3" class="faint">No calls yet.</td></tr>'}</tbody></table>`;
+  done();
+}
+$("#usage-refresh").onclick = loadUsage;
+$("#settings-close").onclick = () => ($("#appearance").hidden = true);
+$("#appearance").onclick = (e) => {
+  if (e.target === $("#appearance")) $("#appearance").hidden = true;
+};
+document.querySelectorAll("#mode-picker button").forEach((b) => b.onclick = () => {
+  appearance.mode = b.dataset.mode;
+  saveAppearance();
+  applyAppearance();
+  buildPalettePicker();      // swatches preview the mode you are actually in
+  buildBackgroundPicker();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#appearance").hidden) $("#appearance").hidden = true;
+});
+
+// Following the OS means following it as it changes, not only at load.
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+  if (appearance.mode === "system") { applyAppearance(); buildPalettePicker(); }
+});
+
+appearance = readAppearance();
+applyAppearance();
+// Photos are on disk only if they were fetched; the picker hides the section
+// entirely when they are not.
+loadPhotoBackgrounds().then(applyBackground);
+
+
+/* ---------- chat background ---------- */
+const CUSTOM_BG_KEY = "bolt-custom-bg-v1";
+
+function customBackground() {
+  try { return localStorage.getItem(CUSTOM_BG_KEY); } catch { return null; }
+}
+
+function applyBackground() {
+  const thread = $("#thread");
+  if (!thread) return;
+  const custom = appearance.background === "custom" ? customBackground() : null;
+  const photo = (appearance.background || "").startsWith("photo:")
+    ? `/backgrounds/${appearance.background.slice(6)}.jpg` : null;
+
+  if (custom || photo) {
+    thread.style.backgroundImage = `url(${custom || photo})`;
+    thread.style.backgroundSize = "";
+    thread.classList.add("has-image");
+    return;
+  }
+
+  thread.classList.remove("has-image");
+  const palette = PALETTES[appearance.palette] || PALETTES.midnight;
+  const tokens = palette[effectiveMode(appearance.mode)];
+  const choice = BACKGROUNDS.find((b) => b.id === appearance.background) || BACKGROUNDS[0];
+  thread.style.backgroundImage = choice.css(tokens);
+  thread.style.backgroundSize = choice.size || "";
+}
+
+let photoBackgrounds = [];
+
+async function loadPhotoBackgrounds() {
+  try {
+    const d = await fetch("/api/backgrounds").then((r) => r.json());
+    photoBackgrounds = d.photos || [];
+  } catch {
+    photoBackgrounds = [];
+  }
+}
+
+function buildBackgroundPicker() {
+  const palette = PALETTES[appearance.palette] || PALETTES.midnight;
+  const tokens = palette[effectiveMode(appearance.mode)];
+  const custom = customBackground();
+
+  const swatches = BACKGROUNDS.map((b) => {
+    const style = b.id === "none" ? "" :
+      `background-image:${b.css(tokens).replace(/\s+/g, " ")};` +
+      (b.size ? `background-size:${b.size};` : "");
+    return `<button type="button" class="bg-swatch${b.id === "none" ? " none" : ""}
+              ${appearance.background === b.id ? " on" : ""}"
+              data-bg="${b.id}" title="${b.name}" aria-label="${b.name}"
+              style="${style}"></button>`;
+  });
+
+  if (custom) {
+    swatches.push(`<button type="button" class="bg-swatch${
+      appearance.background === "custom" ? " on" : ""}" data-bg="custom"
+      title="Your image" aria-label="Your image"
+      style="background-image:url(${custom});background-size:cover"></button>`);
+  }
+
+  // Photographs are grouped separately: they are a different kind of choice from
+  // a generated pattern, and mixing them makes both harder to scan.
+  const photos = photoBackgrounds.map((photo) => `
+    <button type="button" class="bg-swatch${
+      appearance.background === `photo:${photo.id}` ? " on" : ""}"
+      data-bg="photo:${photo.id}" title="${photo.name} — ${photo.category}"
+      aria-label="${photo.name}"
+      style="background-image:url(/backgrounds/${photo.file});background-size:cover"></button>`);
+
+  $("#background-picker").innerHTML = swatches.join("");
+  if (photos.length) {
+    $("#photo-picker").innerHTML = photos.join("");
+    $("#photo-section").hidden = false;
+  } else {
+    $("#photo-section").hidden = true;
+  }
+
+  $("#photo-picker").querySelectorAll(".bg-swatch").forEach((b) => b.onclick = () => {
+    appearance.background = b.dataset.bg;
+    saveAppearance();
+    applyBackground();
+    buildBackgroundPicker();
+  });
+  $("#background-picker").querySelectorAll(".bg-swatch").forEach((b) => b.onclick = () => {
+    appearance.background = b.dataset.bg;
+    saveAppearance();
+    applyBackground();
+    buildBackgroundPicker();
+  });
+  $("#custom-bg-clear").hidden = !custom;
+}
+
+/* A photograph straight from disk can be several megabytes, which will not fit
+   in localStorage and is wasted on a background anyway. Downscale first. */
+function shrinkImage(file, maxEdge = 1600) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("could not read that file"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("that does not look like an image"));
+      img.onload = () => {
+        const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+$("#custom-bg-btn").onclick = () => $("#custom-bg-file").click();
+$("#custom-bg-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const dataUrl = await shrinkImage(file);
+    localStorage.setItem(CUSTOM_BG_KEY, dataUrl);
+    appearance.background = "custom";
+    saveAppearance();
+    applyBackground();
+    buildBackgroundPicker();
+  } catch (err) {
+    // Quota is the likely failure: say so rather than failing silently.
+    alert(err.name === "QuotaExceededError"
+      ? "That image is too large to store in this browser. Try a smaller one."
+      : `Could not use that image: ${err.message || err}`);
+  }
+};
+$("#custom-bg-clear").onclick = () => {
+  try { localStorage.removeItem(CUSTOM_BG_KEY); } catch {}
+  if (appearance.background === "custom") appearance.background = "none";
+  saveAppearance();
+  applyBackground();
+  buildBackgroundPicker();
+};
+
+/* ---------- waves ----------
+   A waveform driven by the microphone's actual samples, not just its loudness:
+   the shape of what you say is visible, which is what makes it read as
+   listening rather than as a meter. */
+class Waves {
+  constructor(canvas) {
+    this.c = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.samples = null;      // Uint8Array of time-domain data, 128 = silence
+    this.level = 0;
+    this.target = 0;
+    this.t = 0;
+    this.running = false;
+  }
+
+  resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const box = this.c.getBoundingClientRect();
+    const w = Math.max(1, Math.round(box.width));
+    const h = Math.max(1, Math.round(box.height));
+    if (this.cssW !== w || this.cssH !== h) {
+      this.cssW = w; this.cssH = h;
+      this.c.width = w * dpr;
+      this.c.height = h * dpr;
+    }
+    return { w: this.c.width, h: this.c.height };
+  }
+
+  start() { if (!this.running) { this.running = true; this.loop(); } }
+
+  stop() {
+    this.running = false;
+    cancelAnimationFrame(this.raf);
+    const { w, h } = this.resize();
+    this.ctx.clearRect(0, 0, w, h);
+  }
+
+  setLevel(v) { this.target = Math.max(0, Math.min(1, v)); }
+  setSamples(buffer) { this.samples = buffer; }
+
+  /** Height of the wave at 0..1 across the canvas. Real audio when we have it,
+      a drifting sine when we do not, so the idle state still looks alive. */
+  amplitudeAt(fraction, phase) {
+    if (this.samples && this.samples.length) {
+      const index = Math.min(this.samples.length - 1,
+                             Math.floor(fraction * this.samples.length));
+      return (this.samples[index] - 128) / 128;
+    }
+    return Math.sin(fraction * Math.PI * 4 + phase) * 0.35;
+  }
+
+  loop() {
+    if (!this.running) return;
+    const { w, h } = this.resize();
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, w, h);
+
+    this.t += 0.02;
+    // Rises fast and falls slowly, which reads as a beat rather than a swell.
+    const rising = this.target > this.level;
+    this.level += (this.target - this.level) * (rising ? 0.4 : 0.09);
+
+    const middle = h / 2;
+    // Hues come from the chosen palette, so the waves belong to the theme rather
+    // than staying blue whatever the rest of the page does.
+    const hues = (PALETTES[appearance.palette] || PALETTES.midnight).hues;
+    const light = effectiveMode(appearance.mode) === "light";
+    const bands = [
+      { hue: hues[0], scale: 1.00, width: 2.6, alpha: light ? 0.85 : 0.95, phase: 0 },
+      { hue: hues[1], scale: 0.72, width: 2.0, alpha: light ? 0.50 : 0.55, phase: 1.1 },
+      { hue: hues[2], scale: 0.48, width: 1.6, alpha: light ? 0.34 : 0.38, phase: 2.3 },
+    ];
+
+    for (const band of bands) {
+      const reach = h * 0.34 * band.scale * (0.18 + this.level * 1.15);
+      ctx.beginPath();
+      for (let x = 0; x <= w; x += 2) {
+        const fraction = x / w;
+        // Taper towards the ends so the wave never meets the canvas edge.
+        const envelope = Math.sin(fraction * Math.PI) ** 1.4;
+        const y = middle
+          + this.amplitudeAt(fraction, this.t + band.phase) * reach * envelope
+          + Math.sin(fraction * 6 + this.t * 1.4 + band.phase) * 3 * envelope;
+        x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      // Light grounds need a darker line to stay legible; dark grounds need a
+      // brighter one. The same lightness cannot serve both.
+      const lightness = light ? 42 - this.level * 6 : 62 + this.level * 8;
+      ctx.strokeStyle = `hsla(${band.hue}, ${light ? 78 : 90}%, ${lightness}%, ${band.alpha})`;
+      ctx.lineWidth = band.width * (devicePixelRatio > 1 ? 2 : 1);
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
+
+    this.raf = requestAnimationFrame(() => this.loop());
+  }
+}
+
+const waves = new Waves($("#waves"));
+const micWaves = new Waves($("#micwaves"));
+const heroWaves = new Waves($("#waves-hero"));
+heroWaves.setLevel(0.16);
+heroWaves.start();
+
+/* ---------- agent picker ---------- */
+function agentMenu(open) {
+  $("#agent-menu").hidden = !open;
+  $("#agent-btn").setAttribute("aria-expanded", open ? "true" : "false");
+}
+$("#agent-btn").onclick = (e) => {
+  e.stopPropagation();
+  agentMenu($("#agent-menu").hidden);
+};
+$("#agent-menu").onclick = (e) => {
+  const row = e.target.closest(".agentrow");
+  if (!row) return;
+  $("#agent").value = row.dataset.agent;
+  $("#agent-name").textContent = row.dataset.agent;
+  $("#agent-menu").querySelectorAll(".agentrow").forEach((r) =>
+    r.classList.toggle("on", r === row));
+  agentMenu(false);
+};
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".agentpick")) agentMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#agent-menu").hidden) agentMenu(false);
+});
+
+function showWaves(on) {
+  $("#waves").classList.toggle("live", on);
+  if (on) waves.start(); else { waves.stop(); waves.setLevel(0); }
+}
+
+// Real amplitude from the microphone, so the animation tracks your voice.
+function meterFrom(stream, target = waves) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  analyser.smoothingTimeConstant = 0.55;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+  const buf = new Uint8Array(analyser.frequencyBinCount);
+  let stop = false;
+  (function tick() {
+    if (stop) return;
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
+    // Both: the samples draw the shape, the level drives how far it reaches.
+    target.setSamples(buf);
+    target.setLevel(Math.min(1, Math.sqrt(sum / buf.length) * 7));
+    requestAnimationFrame(tick);
+  })();
+  return () => {
+    stop = true;
+    target.setSamples(null);
+    ctx.close().catch(() => {});
+  };
+}
+
+/* ---------- microphone ---------- */
+// Recording happens in the browser; transcription happens on the server with the
+// same local whisper model the voice loop uses, so audio never leaves the machine.
+let recorder = null;
+let chunks = [];
+
+function micStatus(html) {
+  $("#micstatus").innerHTML = html;
+}
+
+let playing = null;   // the reply this page is currently speaking
+
+function stopLocalAudio() {
+  if (!playing) return;
+  playing.pause();
+  playing.src = "";
+  playing = null;
+}
+
+// Stops this page and the always-on daemon, which speaks through the laptop and
+// cannot hear the browser.
+async function hush() {
+  stopLocalAudio();
+  try { await fetch("/api/voice/stop", { method: "POST" }); } catch {}
+}
+
+$("#hush").onclick = () => {
+  hush();
+  if (sending) stopGenerating();
+  micStatus(`<span class="warn">stopped</span>`);
+};
+
+// Closing or hiding the tab must not leave the laptop talking to an empty room.
+window.addEventListener("pagehide", () => {
+  stopLocalAudio();
+  navigator.sendBeacon?.("/api/voice/stop");
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopLocalAudio();
+});
+
+async function speakReply(text) {
+  if (!$("#speakback").checked || !text) return;
+  try {
+    const body = new FormData();
+    body.append("text", text);
+    const res = await fetch("/api/voice/speak", { method: "POST", body });
+    if (!res.ok) return;
+    stopLocalAudio();                      // never two replies at once
+    const url = URL.createObjectURL(await res.blob());
+    const audio = new Audio(url);
+    playing = audio;
+    audio.onended = () => { URL.revokeObjectURL(url); if (playing === audio) playing = null; };
+    await audio.play();
+  } catch { /* playback is a nicety, never block on it */ }
+}
+
+function openMicModal() {
+  $("#micmodal").hidden = false;
+  $("#micmodal").classList.remove("working");
+  $("#mic-state").textContent = "Listening…";
+  $("#mic-hint").textContent = "Say “Bolt, …” or an agent name. Enter or Done to send.";
+  // The composer is unusable while listening — that is half the point of the
+  // modal, so a half-typed message cannot collide with what is being said.
+  $("#prompt").blur();
+  micWaves.setLevel(0.15);
+  micWaves.start();
+}
+
+function closeMicModal() {
+  $("#micmodal").hidden = true;
+  $("#micmodal").classList.remove("working");
+  micWaves.stop();
+}
+
+function micWorking(message) {
+  $("#micmodal").classList.add("working");
+  $("#mic-state").textContent = message;
+  $("#mic-hint").textContent = "";
+  micWaves.setLevel(0.5);
+}
+
+async function startRecording() {
+  // The daemon is listening to the same room. Without this it hears the same
+  // sentence and answers it too, so you get two voices at once.
+  await hush();
+  try { await fetch("/api/voice/pause", { method: "POST" }); } catch {}
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const stopMeter = meterFrom(stream, micWaves);   // real volume drives the orb
+  openMicModal();
+  chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    stopMeter();
+    try { await fetch("/api/voice/resume", { method: "POST" }); } catch {}
+    if (cancelled) { cancelled = false; chunks = []; return; }
+    $("#mic").classList.remove("recording");
+    $("#mic").textContent = "🎙 speak";
+    micStatus(`<span class="faint">transcribing…</span>`);
+
+    const body = new FormData();
+    body.append("audio", new Blob(chunks, { type: "audio/webm" }), "clip.webm");
+    body.append("agent", $("#agent").value);
+    if (conversationId) body.append("conversation_id", conversationId);
+
+    micWorking("Transcribing…");
+    try {
+      const res = await fetch("/api/voice/ask", { method: "POST", body });
+      const d = await res.json();
+      clearThinking();
+      closeMicModal();
+      if (!res.ok) return micStatus(`<span class="bad">${esc(d.detail || "failed")}</span>`);
+      if (!d.transcript) return micStatus(`<span class="warn">nothing recognisable</span>`);
+      if (!d.addressed) {
+        micStatus(`<span class="dim">heard “${esc(d.transcript)}” — ${esc(d.detail)}</span>`);
+        // Not addressed to Bolt, but you clearly meant to say it: offer it as a draft.
+        $("#prompt").value = d.transcript;
+        $("#prompt").focus();
+        return;
+      }
+      micStatus("");
+      conversationId = d.conversation_id || conversationId;
+      addTurn({ role: "user", content: d.text || d.transcript, spoken: true });
+      addTurn({ role: "assistant", content: d.reply || "(no reply)", agent: d.agent,
+                turnId: d.turn_id });
+      speakReply(d.reply);
+      loadThreads();
+    } catch (err) {
+      closeMicModal();
+      clearThinking();
+      micStatus(`<span class="bad">${esc(err)}</span>`);
+    }
+  };
+
+  recorder.start();
+  $("#mic").classList.add("recording");
+  $("#mic").textContent = "◼ stop";
+  micStatus(`<span class="bad">listening…</span> <span class="faint">say “Bolt, …” or an
+             agent name, then click stop</span>`);
+}
+
+$("#mic").onclick = async () => {
+  if (recorder && recorder.state === "recording") { recorder.stop(); recorder = null; return; }
+  try {
+    await startRecording();
+  } catch (err) {
+    closeMicModal();
+    try { await fetch("/api/voice/resume", { method: "POST" }); } catch {}
+    micStatus(`<span class="bad">microphone unavailable: ${esc(err.message || err)}</span>`);
+  }
+};
+
+// Cancel throws the recording away; the modal is the only way out of listening.
+let cancelled = false;
+$("#mic-done").onclick = () => { if (recorder?.state === "recording") $("#mic").click(); };
+$("#mic-cancel").onclick = () => {
+  cancelled = true;
+  if (recorder?.state === "recording") { recorder.stop(); recorder = null; }
+  closeMicModal();
+  micStatus("");
+};
+document.addEventListener("keydown", (e) => {
+  if ($("#micmodal").hidden) return;
+  if (e.key === "Escape") { e.preventDefault(); $("#mic-cancel").click(); }
+  if (e.key === "Enter") { e.preventDefault(); $("#mic-done").click(); }
+});
+
+// Disable the button when the server cannot transcribe.
+fetch("/api/voice/status").then((r) => r.json()).then((v) => {
+  if (!v.stt || !v.ffmpeg) {
+    $("#mic").disabled = true;
+    $("#mic").dataset.unsupported = "1";
+    $("#mic").title = v.stt ? "ffmpeg missing on the server" : v.stt_detail;
+  }
+  if (!v.tts) { $("#speakback").checked = false; $("#speakback").disabled = true; }
+}).catch(() => {});
+
+/* ---------- forms ---------- */
+$("#codeform").onsubmit = async (e) => {
+  e.preventDefault();
+  const btn = $("#codeform button"), task = $("#codetask").value.trim();
+  if (!task) return;
+  btn.disabled = true;
+  $("#coderesult").innerHTML = `<div class="empty">running the gate — this takes a while…</div>`;
+  try {
+    const r = await fetch("/api/code", { method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ task, test_command: $("#codetest").value,
+                             apply: $("#codeapply").checked }) }).then((x) => x.json());
+    const attempts = (r.attempts || []).map((a) => `<tr>
+        <td>${a.number}</td><td class="${a.tests_passed ? "ok" : "bad"}">${a.tests_passed ? "passed" : "failed"}</td>
+        <td class="${a.verdict === "approve" ? "ok" : "bad"}">${a.verdict}</td>
+        <td class="faint">${esc(clip(a.summary, 80))}</td></tr>`).join("");
+    $("#coderesult").innerHTML = `
+      <div class="${r.ok ? "ok" : "bad"}">${r.ok ? "approved" : "not accepted — " + esc(r.error)}</div>
+      <table style="margin:10px 0"><thead><tr><th>attempt</th><th>tests</th><th>review</th><th>summary</th></tr></thead>
+      <tbody>${attempts}</tbody></table>
+      ${r.applied ? `<div class="ok">applied:<pre>${esc(r.applied)}</pre></div>`
+                  : `<div class="faint">not applied — snapshot kept at ${esc(r.workdir)}</div>`}
+      <div class="lbl" style="margin-top:12px">forge report</div><pre>${esc(r.forge_report || "")}</pre>
+      <div class="faint" style="margin-top:8px">task ${r.task_id} — open it in the tasks view for the diff.</div>`;
+  } catch (err) { $("#coderesult").innerHTML = `<div class="bad">request failed: ${esc(err)}</div>`; }
+  finally { btn.disabled = false; refresh(); }
+};
+
+/* ---------- boot ---------- */
+async function loadAgents() {
+  const [agents, models] = await Promise.all([
+    fetch("/api/agents").then((r) => r.json()),
+    fetch("/api/models").then((r) => r.json()),
+  ]);
+  window._agents = agents;
+  window._models = models.models;
+  window._modelmeta = models;
+  // Manager first — it is the default and the one that fans work out — then the
+  // specialists in the order the roster lists them.
+  const ordered = [...agents].sort((a, b) =>
+    (a.name === "manager" ? -1 : b.name === "manager" ? 1 : 0));
+  const current = $("#agent").value || "manager";
+  $("#agent").innerHTML = ordered.map((a) =>
+    `<option value="${a.name}"${a.name === current ? " selected" : ""}>${a.name}</option>`).join("");
+  $("#agent-menu").innerHTML = ordered.map((a) =>
+    `<button type="button" class="agentrow${a.name === current ? " on" : ""}"
+             role="option" data-agent="${a.name}">
+       <b>${a.name}</b><span>${esc(a.blurb || "")}</span>
+     </button>`).join("");
+  $("#agent-name").textContent = current;
+}
+
+async function refresh() {
+  await health();
+  if (view === "overview") return refreshOverview();
+  if (view === "tasks") { await refreshTasks(); if (selected) showDetail(selected); return; }
+  if (view === "models") { await loadAgents(); return refreshModels(); }
+  if (view === "evals") return refreshEvals();
+}
+
+loadAgents().then(refresh);
+loadThreads();
+connect();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

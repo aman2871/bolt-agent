@@ -1,0 +1,10 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+bolt.db*
+.worktrees/
+media/
+models/
+notes/
+tests/

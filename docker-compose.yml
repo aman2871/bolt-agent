@@ -1,0 +1,117 @@
+# Bolt stack. `docker compose up -d` and it stays up across reboots, provided
+# Docker Desktop itself is set to start at login (see scripts/install-autostart.sh).
+#
+# Ollama runs on the host, not in here — it holds your cloud credentials and, for
+# local models, needs the GPU. Containers reach it via host.docker.internal.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --tcp-keepalive 60
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      # 8080 on this machine is already taken by the iiitd-web nginx container.
+      - "${BOLT_PORT:-8090}:8080"
+    environment:
+      BOLT_OLLAMA_URL: http://host.docker.internal:11434/v1
+      BOLT_REDIS_URL: redis://redis:6379/0
+      BOLT_BUS: ${BOLT_BUS:-inproc}
+      BOLT_LLM_CONCURRENCY: ${BOLT_LLM_CONCURRENCY:-4}
+      # Shared with the host voice daemon through the mount below.
+      BOLT_STATE_DIR: /state
+      # The index stores absolute paths, and the container sees projects at
+      # /projects/... while the host sees ~/Projects/... — so each keeps its own.
+      BOLT_INDEX_DB: /data/code-index.db
+      # Other projects agents may reach, beyond the workspace itself.
+      BOLT_EXTRA_ROOTS: /projects/Chartr
+      AWS_CONFIG_FILE: /root/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /root/.aws/credentials
+      # Deliberately not defaulted: this credentials file has no [default] profile
+      # with keys, so agents pass --profile explicitly (aws configure list-profiles).
+      AWS_PROFILE: ${AWS_PROFILE:-}
+      BOLT_AWS_WRITE: ${BOLT_AWS_WRITE:-0}
+    volumes:
+      - .:/workspace                       # what the agents may read and write
+      - bolt-data:/data                    # database and sandbox snapshots
+      - ./models:/models:ro                # whisper and kokoro weights
+      # The voice daemon runs on the host (a container has no microphone) but the
+      # dashboard runs in here. They coordinate through one small state file, so
+      # both must see the same directory or tab gating never reaches the daemon.
+      - ${HOME}/.bolt:/state
+      # Your other work, so agents can read across projects. Credentials files are
+      # refused by name regardless of this mount — see BOLT_SECRET_PATTERNS.
+      - ${CHARTR_DIR:-${HOME}/Projects/Chartr}:/projects/Chartr
+      # AWS profiles, read-only. The shell tool refuses any command that is not a
+      # read verb unless BOLT_AWS_WRITE=1, and the file tools refuse to read this
+      # directory at all — only the aws CLI itself uses it.
+      - ${HOME}/.aws:/root/.aws:ro
+      # Downloaded wallpapers, so the container serves the same set the host has.
+      - ./backgrounds:/workspace/backgrounds
+      - /var/run/docker.sock:/var/run/docker.sock   # lets the sandbox use Docker
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Bus workers. Off by default; start them with:
+  #   BOLT_BUS=redis docker compose --profile workers up -d
+  worker-scout:
+    build: .
+    restart: unless-stopped
+    profiles: [workers]
+    command: ["bolt", "worker", "scout", "--quiet"]
+    environment: &worker-env
+      BOLT_OLLAMA_URL: http://host.docker.internal:11434/v1
+      BOLT_REDIS_URL: redis://redis:6379/0
+      BOLT_BUS: redis
+    volumes: &worker-volumes
+      - .:/workspace
+      - bolt-data:/data
+      - ./models:/models:ro
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-forge:
+    build: .
+    restart: unless-stopped
+    profiles: [workers]
+    command: ["bolt", "worker", "forge", "--quiet"]
+    environment: *worker-env
+    volumes: *worker-volumes
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-iris:
+    build: .
+    restart: unless-stopped
+    profiles: [workers]
+    command: ["bolt", "worker", "iris", "--quiet"]
+    environment: *worker-env
+    volumes: *worker-volumes
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis-data:
+  bolt-data:

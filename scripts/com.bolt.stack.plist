@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bolt.stack</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__SCRIPT__</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Retry every 10 minutes if the daemon was not ready at login. -->
+    <key>StartInterval</key>
+    <integer>600</integer>
+
+    <key>StandardOutPath</key>
+    <string>__LOG__</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BOLT_DIR</key>
+        <string>__BOLT_DIR__</string>
+        <key>BOLT_EXTRA_ROOTS</key>
+        <string>__EXTRA_ROOTS__</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

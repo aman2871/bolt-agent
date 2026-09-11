@@ -1,0 +1,33 @@
+[project]
+name = "bolt"
+version = "0.1.0"
+description = "Voice and text multi-agent system on Ollama"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "redis>=5.0",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "websockets>=12.0",
+    "python-multipart>=0.0.9",
+    "numpy>=1.26",
+]
+
+[project.scripts]
+bolt = "bolt.cli:app"
+
+# Without this, setuptools' flat-layout discovery treats models/, media/ and
+# notes/ as packages and refuses to build.
+[tool.setuptools.packages.find]
+include = ["bolt*"]
+
+[tool.setuptools.package-data]
+bolt = ["config/*.yaml", "api/dashboard/*.html", "assets/*", "sandbox/Dockerfile",
+        "quality/evals/tasks/*.yaml"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+bolt.db*
+.worktrees/
+models/
+notes/
+media/
+uploads/
+backgrounds/
+.idea/
+bolt.egg-info/
+tmp_suite/
+*.egg-info/
+.DS_Store
