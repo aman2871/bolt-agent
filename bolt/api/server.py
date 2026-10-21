@@ -181,14 +181,53 @@ async def set_ollama_settings(body: OllamaSettings) -> dict[str, Any]:
 
 @app.post("/api/settings/ollama/test")
 async def test_ollama() -> dict[str, Any]:
-    """Ask the endpoint what it serves. That is the whole connection check."""
+    """Can this endpoint actually answer? Listing models is not enough.
+
+    ollama.com serves GET /v1/models to anyone — no key required — and then
+    401s every completion. Checking only the listing reported a healthy
+    connection on a config that could not run a single request, which is a
+    worse failure than saying nothing.
+    """
     url, _ = llm.endpoint()
     try:
         found = await models_mod.discovered()
     except Exception as exc:
         return {"ok": False, "base_url": url, "error": f"{type(exc).__name__}: {exc}",
                 "models": [], "known": models_mod.names()}
-    return {"ok": True, "base_url": url, "models": found, "known": models_mod.names()}
+
+    usable = [m for m in (models_mod.names() or []) if m in found] or found
+    if not usable:
+        return {"ok": False, "base_url": url, "models": found,
+                "known": models_mod.names(),
+                "error": "the endpoint serves no models Bolt knows about"}
+
+    # The smallest real call there is: one token, no tools. Try a few, because
+    # one model being retired is a catalogue problem, not a connection problem
+    # — and saying "not connected" would send someone hunting the wrong fault.
+    retired, refused, last = [], [], ""
+    for name in usable[:4]:
+        try:
+            await llm.complete(name, [{"role": "user", "content": "hi"}], max_tokens=1)
+        except Exception as exc:
+            last = str(exc)
+            (retired if "410" in last else refused).append(name)
+            continue
+        return {"ok": True, "base_url": url, "models": found,
+                "known": models_mod.names(),
+                "retired": retired,
+                "warning": (f"{', '.join(retired)} no longer exists upstream — the "
+                            f"agents on it will fail until you repoint them")
+                           if retired else ""}
+
+    hint = ""
+    if "401" in last or "Unauthorized" in last:
+        hint = (" — the endpoint lists its models publicly but needs an API key to "
+                "answer. Either paste one above, or point Bolt at the Ollama app on "
+                "your machine, which signs its own cloud requests.")
+    return {"ok": False, "base_url": url, "models": found,
+            "known": models_mod.names(), "retired": retired,
+            "error": f"models list, but none of {', '.join(refused + retired)} "
+                     f"would answer{hint}"}
 
 
 @app.get("/api/tools")

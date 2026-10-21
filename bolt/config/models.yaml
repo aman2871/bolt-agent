@@ -40,7 +40,7 @@ models:
     cost: 0.8
     strengths: [reasoning, tools, shell]
 
-  deepseek-v4-flash:cloud:
+  glm-5.3-flash:cloud:
     tier: fast
     vision: false
     context: 128000
