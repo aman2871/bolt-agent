@@ -22,11 +22,11 @@ async def handle(envelope: dict[str, Any], on_event=None) -> dict[str, Any]:
         # Redelivery after a crash on the producer side, or a task created elsewhere.
         store.create_task(agent, envelope["prompt"], parent_id=envelope.get("reply_to"),
                           root_id=envelope.get("root_id"), depth=envelope.get("depth", 0),
-                          budget_tokens=envelope.get("budget_tokens", 200_000))
+                          budget_tokens=envelope.get("budget_tokens", 1_000_000))
 
     result = await run_agent(
         spec, envelope["prompt"], task_id=task_id, root_id=envelope.get("root_id"),
-        depth=envelope.get("depth", 0), budget_tokens=envelope.get("budget_tokens", 200_000),
+        depth=envelope.get("depth", 0), budget_tokens=envelope.get("budget_tokens", 1_000_000),
         extra={"on_event": on_event}, on_event=on_event,
     )
     return {"task_id": task_id, "agent": agent, "ok": result.ok,

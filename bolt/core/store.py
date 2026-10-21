@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     result        TEXT,
     error         TEXT,
     depth         INTEGER NOT NULL DEFAULT 0,
-    budget_tokens INTEGER NOT NULL DEFAULT 200000,
+    budget_tokens INTEGER NOT NULL DEFAULT 1000000,
     created_at    REAL NOT NULL,
     finished_at   REAL
 );
@@ -236,7 +236,7 @@ def create_task(
     parent_id: str | None = None,
     root_id: str | None = None,
     depth: int = 0,
-    budget_tokens: int = 200_000,
+    budget_tokens: int = 1_000_000,
 ) -> str:
     task_id = new_id("t")
     with tx() as conn:

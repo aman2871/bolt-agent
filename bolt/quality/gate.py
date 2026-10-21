@@ -77,7 +77,7 @@ class GateResult:
 async def run_code_task(
     task: str,
     test_command: str = DEFAULT_TEST_COMMAND,
-    budget_tokens: int = 400_000,
+    budget_tokens: int = 1_000_000,
     keep_snapshot: bool = True,
     on_event=None,
 ) -> GateResult:

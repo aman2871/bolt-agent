@@ -62,7 +62,7 @@ def extract_json(text: str) -> dict[str, Any] | None:
 async def review(diff: str, test_output: str, tests_passed: bool,
                  task_prompt: str, root_id: str | None = None,
                  parent_id: str | None = None,
-                 depth: int = 1, budget_tokens: int = 200_000,
+                 depth: int = 1, budget_tokens: int = 1_000_000,
                  on_event=None) -> Review:
     """Ask Sentinel to pass or fail a change. An unparseable reply is a rejection."""
     spec = roster.get("sentinel")

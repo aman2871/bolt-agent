@@ -64,7 +64,7 @@ def ask(
     prompt: str = typer.Argument(..., help="What you want done."),
     agent: str = typer.Option("manager", "--agent", "-a", help="Which agent to address."),
     verbose: bool = typer.Option(True, "--verbose/--quiet", "-v/-q"),
-    budget: int = typer.Option(200_000, "--budget", help="Token budget for the whole task tree."),
+    budget: int = typer.Option(1_000_000, "--budget", help="Token budget for the whole task tree."),
 ) -> None:
     """Send a request to an agent."""
     try:
@@ -90,7 +90,7 @@ def code(
     test_command: str = typer.Option(gate_mod.DEFAULT_TEST_COMMAND, "--test", "-t"),
     apply: bool = typer.Option(False, "--apply", help="Apply the approved diff to the workspace."),
     verbose: bool = typer.Option(True, "--verbose/--quiet", "-v/-q"),
-    budget: int = typer.Option(400_000, "--budget"),
+    budget: int = typer.Option(1_000_000, "--budget"),
 ) -> None:
     """Make a code change behind the sandbox and review gate."""
     result = asyncio.run(gate_mod.run_code_task(

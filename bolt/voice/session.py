@@ -20,7 +20,7 @@ Reporter = Callable[[str, dict[str, Any]], None]
 @dataclass
 class VoiceConfig:
     default_agent: str = "manager"
-    budget_tokens: int = 200_000
+    budget_tokens: int = 1_000_000
     input_device: int | None = None
     output_device: int | None = None
     speak_replies: bool = True
