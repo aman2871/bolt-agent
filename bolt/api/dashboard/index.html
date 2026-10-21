@@ -4,11 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bolt Control</title>
+<script>
+  // The welcome panel is in the static markup, so it paints before the restore
+  // fetch returns. If a conversation is pending, hide it up front rather than
+  // let the hero logo flash on every reload.
+  try {
+    if (localStorage.getItem("bolt.conversation"))
+      document.documentElement.classList.add("restoring");
+  } catch (err) { /* no storage, so nothing to restore */ }
+</script>
+<!-- Three is vendored, not pulled from a CDN: Bolt has to work with the network off. -->
+<script type="importmap">
+  {"imports": {"three": "/assets/vendor/three.module.min.js"}}
+</script>
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/icon-180.png">
 <style>
   :root {
     --bg:#0e1014; --panel:#161920; --panel2:#11141a; --line:#252a35; --text:#e6e9ef;
     --dim:#8b93a7; --faint:#5d6478; --accent:#7aa2f7; --ok:#7ddc8f; --bad:#f7768e;
     --warn:#e0af68; --purple:#bb9af7;
+    --chat-scrim: color-mix(in srgb, var(--bg) 80%, transparent);
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   }
   *{box-sizing:border-box}
@@ -19,6 +35,8 @@
 
   header{display:flex;align-items:center;gap:18px;padding:12px 20px;border-bottom:1px solid var(--line);
          position:sticky;top:0;background:var(--bg);z-index:10;flex-wrap:wrap}
+  /* Header gap is 18px; pull the mark back so it sits tight against the wordmark. */
+  #mark{width:26px;height:26px;flex:none;margin-right:-9px}
   h1{margin:0;font-size:15px;letter-spacing:.18em;text-transform:uppercase}
   .pill{border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-size:11px;color:var(--dim)}
   .pill b{color:var(--text);font-weight:600}
@@ -38,6 +56,10 @@
   section>h2{margin:0;padding:9px 13px;font-size:10px;letter-spacing:.13em;text-transform:uppercase;
              color:var(--dim);border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
   section>h2 .right{margin-left:auto;text-transform:none;letter-spacing:0}
+  /* The h2 gap is 10px; pull the mark in so it reads as one unit with the label. */
+  .sidelogo{flex:none;display:flex;align-items:center;justify-content:center;
+            height:1in;border-bottom:1px solid var(--line)}
+  .sidelogo img{width:1in;height:1in;object-fit:contain}
   .body{padding:11px 13px;overflow-x:auto}
   .span{grid-column:1/-1}
 
@@ -99,6 +121,16 @@
   .thread-item .x:hover { opacity: 1; color: var(--bad); }
 
   #thread { flex: 1; overflow-y: auto; padding: 18px 22px; min-height: 0; }
+  /* Shown only once you have scrolled away from a live reply. */
+  #tolatest { position: absolute; left: 50%; transform: translateX(-50%);
+              bottom: 92px; z-index: 5; display: none; align-items: center; gap: 6px;
+              padding: 5px 11px; border-radius: 999px; font-size: 11px;
+              color: var(--text); background: var(--panel);
+              border: 1px solid var(--line); cursor: pointer;
+              box-shadow: 0 3px 14px rgba(0,0,0,.4); }
+  #tolatest.show { display: flex; }
+  #tolatest:hover { border-color: var(--accent); }
+  #tolatest svg { width: 12px; height: 12px; }
   .turn { display: flex; margin-bottom: 16px; }
   .turn.user { justify-content: flex-end; }
   .bubble { max-width: min(680px, 82%); padding: 10px 14px; border-radius: 14px;
@@ -142,12 +174,94 @@
   @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .45 }
                       30% { transform: translateY(-4px); opacity: 1 } }
 
+  /* While a reply is being produced the bubble leads with what Bolt is doing:
+     a live clock and the last few steps, so a long silence is legible. */
+  .worklog { margin: 0 0 9px; font-size: 11px; color: var(--faint); }
+  .worklog-head { display: flex; align-items: center; gap: 7px; width: 100%;
+                  letter-spacing: .08em; text-transform: uppercase;
+                  background: none; border: 0; padding: 0; cursor: pointer;
+                  font: inherit; color: inherit; text-align: left; }
+  .worklog-avatar { width: 48px; height: 48px; flex: none; }
+  .worklog-label { color: var(--purple); }
+  .worklog-time { color: var(--dim); font-variant-numeric: tabular-nums;
+                  letter-spacing: 0; }
+  /* Collapsed by default: the head alone, with the current step beside it.
+     Expanding swaps that single line for the full list. */
+  .worklog-now { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                 white-space: nowrap; text-transform: none; letter-spacing: 0; }
+  .worklog.open .worklog-now { display: none; }
+  /* A glyph at 11px was all but invisible, so the chevron is a stroked icon. */
+  .worklog.done .worklog-label { color: var(--ok); }
+
+  /* A resident cat, rendered in three dimensions: parked it faces you and
+     blinks, it turns side-on to gallop while Bolt works, and becomes the
+     lightning mark when an answer lands. It never swallows a click beyond its
+     own box. Where it sits is up to you: drag it anywhere. The sprite stays as
+     the fallback for a browser that cannot give us WebGL. */
+  #pet { position: fixed; right: 20px; bottom: 96px; width: 88px; height: 88px;
+         z-index: 40; pointer-events: none; opacity: .92;
+         user-select: none; -webkit-user-select: none;
+         transition: opacity .15s; }
+  /* #pet is pointer-events:none, so :hover never matches it however the cursor
+     sits on the cat — the class comes from the button's own enter/leave. */
+  #pet.hover { opacity: 1; }
+  #pet .pet-tap { display: block; width: 100%; height: 100%; padding: 0; border: 0;
+                  background: none; cursor: grab; pointer-events: auto;
+                  touch-action: none; }
+  #pet.dragging { opacity: 1; }
+  #pet.dragging .pet-tap { cursor: grabbing; }
+  #pet.dragging img { filter: drop-shadow(0 7px 11px rgba(0,0,0,.5)); }
+  #pet .pet-tap:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px;
+                                border-radius: 8px; }
+  /* Without this Chrome starts its own image drag, which cancels the pointer
+     stream mid-gesture and the cat snaps back. */
+  #pet .pet-view { display: block; width: 100%; height: 100%; }
+  #pet img { width: 100%; height: 100%; display: block; -webkit-user-drag: none; }
+  /* The canvas is live, so the sprite steps aside. */
+  #pet.three img { display: none; }
+  #pet.poke .pet-tap { animation: pet-pounce .5s ease-out; }
+  /* The speech bubble hangs off #pet, which only slides — were it under the
+     mirrored layer it would read backwards on the return leg. */
+  .pet-say { position: absolute; bottom: 100%; right: 0; margin-bottom: 7px;
+             max-width: 190px; padding: 5px 8px; border-radius: 9px;
+             background: var(--panel); border: 1px solid var(--line);
+             color: var(--text); font-size: 11px; line-height: 1.35;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+             box-shadow: 0 2px 12px rgba(0,0,0,.35); pointer-events: none;
+             opacity: 0; transform: translateY(4px); transition: opacity .18s, transform .18s; }
+  .pet-say.show { opacity: 1; transform: translateY(0); }
+  /* Parked near an edge, the bubble opens towards the room it has. */
+  #pet.say-left .pet-say { left: 0; right: auto; }
+  #pet.say-below .pet-say { bottom: auto; top: 100%; margin: 7px 0 0; }
+  @keyframes pet-pounce { 0%   { transform: translateY(0) scale(1, 1) }
+                          20%  { transform: translateY(-20px) scale(.92, 1.12) }
+                          50%  { transform: translateY(0) scale(1.12, .88) }
+                          72%  { transform: translateY(-6px) scale(1, 1) }
+                          100% { transform: translateY(0) scale(1, 1) } }
+  @media (prefers-reduced-motion: reduce) {
+    #pet.poke .pet-tap { animation: none; }
+  }
+  .worklog-chev { margin-left: auto; flex: none; width: 14px; height: 14px;
+                  color: var(--dim); transition: transform .15s, color .15s; }
+  .worklog-chev svg { display: block; width: 100%; height: 100%; }
+  .worklog-head:hover .worklog-chev { color: var(--text); }
+  .worklog.open .worklog-chev { transform: rotate(90deg); }
+  .worklog-steps { margin-top: 5px; display: none; flex-direction: column; gap: 2px;
+                   border-left: 1px solid var(--line); padding-left: 9px; }
+  .worklog.open .worklog-steps { display: flex; }
+  .worklog-steps div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Older steps recede so the newest one reads first. */
+  .worklog-steps div:not(:last-child) { opacity: .45; }
+
+
   #composer { border-top: 1px solid var(--line); padding: 10px 14px 12px;
               position: relative; flex: none; }
   #waves { position: absolute; inset: auto 0 0 0; width: 100%; height: 120px;
             pointer-events: none; opacity: 0; transition: opacity .45s; z-index: 0; }
   #waves.live { opacity: .9; }
-  #waves-hero { display: block; margin: 0 auto; width: min(360px, 70vw); height: 96px; }
+  html.restoring .welcome { display: none; }
+  .hero-logo { display: block; margin: 0 auto 6px; width: 140px; height: 140px;
+               object-fit: contain; }
   .composer-row { display: flex; gap: 8px; align-items: flex-end;
                   position: relative; z-index: 1; }
   /* The select, the textarea and the buttons all sit on one row, so they share
@@ -263,10 +377,19 @@
                border-radius: 8px; padding: 5px 9px; font-size: 11.5px;
                color: var(--dim); }
   .chip-file .kind { color: var(--accent); }
-  .chip-file .drop { background: none; border: none; color: var(--faint);
-                     cursor: pointer; padding: 0 2px; }
-  .chip-file .drop:hover { color: var(--bad); }
+  .chip-file .thumb { width: 20px; height: 20px; border-radius: 4px; object-fit: cover;
+                      display: block; }
+  .chip-file .drop { display: grid; place-items: center; width: 18px; height: 18px;
+                     flex: none; padding: 0; margin-left: 1px; border-radius: 50%;
+                     background: color-mix(in srgb, var(--text) 10%, transparent);
+                     border: none; color: var(--text); cursor: pointer; }
+  .chip-file .drop svg { width: 9px; height: 9px; display: block; }
+  .chip-file .drop:hover { background: var(--bad); color: var(--bg); }
   .chip-file.busy { opacity: .6; }
+  .chip-clear { background: none; border: none; color: var(--faint); cursor: pointer;
+                font-size: 11.5px; padding: 5px 4px; text-decoration: underline;
+                text-underline-offset: 2px; }
+  .chip-clear:hover { color: var(--text); }
 
   /* The whole chat panel is the drop target; anything smaller is a game of darts. */
   #chatpanel.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
@@ -404,6 +527,27 @@
   .bg-swatch.none::after { content: "\2014"; color: var(--faint); font-size: 13px;
                            position: absolute; inset: 0; display: grid;
                            place-content: center; }
+  select.agent-model { flex: none; min-width: 0; width: auto; max-width: 230px;
+                      padding: 3px 7px; font-size: 11px; font-family: inherit;
+                      border-radius: 7px; border: 1px solid var(--line);
+                      background: var(--panel2); color: var(--faint); cursor: pointer; }
+  select.agent-model:hover { border-color: var(--dim); color: var(--text); }
+  select.agent-model.pinned { color: var(--acc); border-color: var(--acc); }
+  select.agent-model:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* One effort control per agent, in the row of the model it resolves to —
+     effort belongs to the agent, since one model serves several of them. */
+  .effort-cell { display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; }
+  .effort-pair { display: inline-flex; align-items: center; gap: 4px; }
+  .effort-pair > span { font-size: 11.5px; }
+  select.effort { flex: none; min-width: 0; width: auto; padding: 1px 4px;
+                  font-size: 10.5px; font-family: inherit; border-radius: 5px;
+                  border: 1px solid var(--line); background: var(--panel2);
+                  color: var(--faint); cursor: pointer; }
+  select.effort:hover { border-color: var(--dim); color: var(--text); }
+  select.effort.set { color: var(--acc); border-color: var(--acc); }
+  select.effort:disabled { opacity: .45; cursor: not-allowed; }
+
   #photo-section { margin-top: 0; }
   #photo-section[hidden] { display: none; }
   /* Ride along in the sticky bar with Done: picking a custom image is a choice
@@ -442,6 +586,14 @@
   .field-hint { margin: -2px 0 12px 108px; font-size: 11.5px; color: var(--dim);
                 line-height: 1.55; }
   .field-hint b { color: var(--text); font-weight: 600; }
+  .pane-hint { margin: 4px 0 0; font-size: 11.5px; color: var(--dim); line-height: 1.55; }
+  .petcolors { display: flex; align-items: center; gap: 16px; font-size: 12px;
+               color: var(--dim); }
+  .petcolors label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+  /* The global input rule stretches everything to 180px; a swatch is a swatch. */
+  .petcolors input[type=color] { flex: none; min-width: 0; width: 38px; height: 24px;
+                                 padding: 0; cursor: pointer; background: none;
+                                 border: 1px solid var(--line); border-radius: 6px; }
   .linkish { background: none; border: none; padding: 0 0 0 8px; font-size: 11.5px;
              color: var(--accent); cursor: pointer; font-family: inherit;
              text-decoration: underline; }
@@ -530,15 +682,14 @@
   /* The background sits behind the thread. A scrim keeps message text legible
      over a photograph, which is otherwise a coin toss. */
   #thread { background-repeat: repeat; background-position: center; }
+  /* `local` would size `cover` against the scrollable content box, so a long
+     reply scales the photo to the full scroll height and it appears zoomed in.
+     `fixed` sizes it against the viewport, which does not grow with the thread. */
   #thread.has-image { background-size: cover; background-repeat: no-repeat;
-                      background-attachment: local; }
+                      background-attachment: fixed; }
   /* A photograph has bright regions wherever it likes, and text has to stay
      readable over all of them — so the scrim is heavier than looks necessary on
      a dark image, and the welcome copy gets its own shadow on top. */
-  #thread.has-image::before {
-    content: ""; position: absolute; inset: 0; pointer-events: none;
-    background: color-mix(in srgb, var(--bg) 80%, transparent);
-  }
   /* Over a photograph the welcome copy needs the image quietened behind it. A
      backdrop blur smeared the photo into a visible vertical band, and a wash
      painted on the element itself gets cut off square at the box edge. So the
@@ -582,6 +733,7 @@
 <body>
 
 <header>
+  <img id="mark" src="/assets/favicon-32.png" alt="" width="26" height="26">
   <h1>Bolt</h1>
   <span class="pill" id="p-ws">ws <b class="dim">…</b></span>
   <span class="pill" id="p-redis">redis <b class="dim">…</b></span>
@@ -608,7 +760,9 @@
 <!-- CHAT -->
 <main id="view-chat" class="on">
   <section id="threads">
-    <h2>Conversations <span class="right"><button id="newchat" style="padding:2px 9px">new</button></span></h2>
+    <div class="sidelogo"><img src="/assets/logo-512.png" alt="Bolt"></div>
+    <h2>Conversations
+      <span class="right"><button id="newchat" style="padding:2px 9px">new</button></span></h2>
     <div class="body" id="threadlist"></div>
   </section>
 
@@ -616,9 +770,14 @@
     <h2><span id="chattitle">New conversation</span>
       <span class="right faint" id="chatmeta"></span></h2>
 
+    <button type="button" id="tolatest">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      Jump to latest</button>
+
     <div id="thread">
       <div class="welcome">
-        <canvas id="waves-hero" width="360" height="96"></canvas>
+        <img class="hero-logo" src="/assets/logo-512.png" alt="">
         <h3>Bolt</h3>
         <p class="faint">Ask anything, or hold the mic and say
           “Bolt, …”. The manager will pull in whichever specialists it needs.</p>
@@ -671,6 +830,7 @@
      <p class="settings-navtitle">Settings</p>
      <button type="button" class="snav on" data-pane="usage">Usage</button>
      <button type="button" class="snav" data-pane="appearance">Appearance</button>
+     <button type="button" class="snav" data-pane="pet">Pet</button>
      <button type="button" class="snav" data-pane="voice">Voice</button>
      <button type="button" class="snav" data-pane="connection">Connection</button>
      <button type="button" class="snav" data-pane="agents">Agents</button>
@@ -705,6 +865,39 @@
       <input type="file" id="custom-bg-file" accept="image/*" hidden>
     </div>
     </div><!-- /pane-appearance -->
+
+    <div class="settings-pane" id="pane-pet" hidden>
+      <p class="setting-label">Switches</p>
+      <label class="switch">
+        <span><b>Show the pet</b><i>A cat in three dimensions that keeps you
+              company. It faces you while parked and gallops while Bolt
+              works.</i></span>
+        <input type="checkbox" id="pet-enabled">
+      </label>
+
+      <p class="setting-label">Size</p>
+      <div class="segmented" id="pet-size">
+        <button type="button" data-size="64">Small</button>
+        <button type="button" data-size="88">Medium</button>
+        <button type="button" data-size="120">Large</button>
+      </div>
+
+      <p class="setting-label">Colours</p>
+      <div class="petcolors">
+        <label><input type="color" id="pet-coat"> Coat</label>
+        <label><input type="color" id="pet-spots"> Spots</label>
+        <label><input type="color" id="pet-eyes"> Eyes</label>
+        <button type="button" class="linkish" id="pet-colors-reset">Reset</button>
+      </div>
+
+      <p class="setting-label">Where it sits</p>
+      <div class="field-actions">
+        <button type="button" id="pet-home">Send it back to the corner</button>
+      </div>
+      <p class="pane-hint">Drag the cat anywhere on the window, or nudge it with
+        the arrow keys once it has focus. Click it for a trick, and for what Bolt
+        is working on while a reply is coming.</p>
+    </div><!-- /pane-pet -->
 
     <div class="settings-pane" id="pane-voice" hidden>
       <p class="setting-label">Switches</p>
@@ -889,13 +1082,25 @@
   </section>
 </main>
 
+<!-- Body level and fixed, so it can be dragged over any view, not just the chat. -->
+<div id="pet">
+  <button class="pet-tap" type="button" title="Pet the cat · drag to move"
+          aria-label="Pet the cat. Drag, or use the arrow keys, to move it">
+    <span class="pet-view"></span>
+    <img src="/assets/anim/bolt-running.webp" alt="" draggable="false">
+  </button>
+  <span class="pet-say" aria-live="polite"></span>
+</div>
+
 <script>
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[<>&]/g, (c) => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
 const clip = (s, n) => { s = String(s ?? ""); return s.length > n ? s.slice(0, n) + "…" : s; };
 const live = new Set();          // agents currently mid-run
 let selected = null;
-let view = "overview";
+// The markup boots with the chat pane on, so this has to agree with it: the
+// paste handler and refresh() both branch on it.
+let view = "chat";
 
 /* ---------- navigation ---------- */
 document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
@@ -929,13 +1134,18 @@ function render(ev) {
   }
 
   switch (ev.kind) {
-    case "model":       noteStep(`${ev.agent} · ${ev.model}`); return say(`<span class="${ev.source === "auto" ? "ok" : ev.source === "override" ? "warn" : "faint"}">uses ${esc(ev.model)}</span> <span class="faint">${esc(ev.reason)}</span>`);
-    case "iteration":   return say(`<span class="faint">step ${ev.iteration}</span>`);
-    case "tool_call":   return say(`<span class="acc">→ ${esc(ev.tool)}</span> <span class="faint">${esc(clip(ev.arguments,150))}</span>`);
+    case "model":       work(`${ev.agent} · ${ev.model}`); return say(`<span class="${ev.source === "auto" ? "ok" : ev.source === "override" ? "warn" : "faint"}">uses ${esc(ev.model)}</span> <span class="faint">${esc(ev.reason)}</span>`);
+    case "iteration":   work(`${ev.agent} · step ${ev.iteration}`);
+                        return say(`<span class="faint">step ${ev.iteration}</span>`);
+    case "tool_call":   work(`${ev.agent} → ${ev.tool} ${clip(ev.arguments, 70)}`);
+                        return say(`<span class="acc">→ ${esc(ev.tool)}</span> <span class="faint">${esc(clip(ev.arguments,150))}</span>`);
     case "tool_result": return say(`<span class="faint">← ${esc(ev.tool)} ${esc(clip(ev.result,150))}</span>`);
-    case "sandbox_ready": return say(`<span class="warn">sandbox ready</span> <span class="faint">${esc(ev.workdir)}</span>`);
-    case "attempt":     return say(`<span class="warn">attempt ${ev.number}/${ev.of}</span>`);
-    case "tests":       return say(`<span class="${ev.passed?"ok":"bad"}">tests ${ev.passed?"passed":"failed"}</span> <span class="faint">exit ${ev.exit_code} · ${esc(ev.isolation)} · ${ev.duration_ms}ms</span>`);
+    case "sandbox_ready": work("sandbox ready");
+                          return say(`<span class="warn">sandbox ready</span> <span class="faint">${esc(ev.workdir)}</span>`);
+    case "attempt":     work(`attempt ${ev.number}/${ev.of}`);
+                        return say(`<span class="warn">attempt ${ev.number}/${ev.of}</span>`);
+    case "tests":       work(`tests ${ev.passed ? "passed" : "failed"}`);
+                        return say(`<span class="${ev.passed?"ok":"bad"}">tests ${ev.passed?"passed":"failed"}</span> <span class="faint">exit ${ev.exit_code} · ${esc(ev.isolation)} · ${ev.duration_ms}ms</span>`);
     case "voice_stop":  return say(`<span class="warn">speech stopped</span>`);
     case "gated":       return say(`<span class="faint">not listening — ${esc(ev.reason)}</span>`);
     case "ungated":     return say(`<span class="ok">listening again</span>`);
@@ -949,14 +1159,16 @@ function render(ev) {
       if (sending && ev.task_id === streamTask) streamDelta(ev.agent, ev.text);
       return;
     case "reasoning":
-      if (sending && ev.task_id === streamTask && !streamText) noteStep(`${ev.agent} · thinking`);
+      if (ev.task_id === streamTask && !streamText) work(`${ev.agent} · thinking`);
       return;
     case "stream_end":
       return;
     case "probe":       return line(`<span class="who">probe</span><span class="txt"><span class="${ev.supported ? "ok" : "bad"}">${ev.supported ? "pass" : "fail"}</span> <span class="acc">${esc(ev.model)}</span> <span class="faint">${esc(ev.capability)} — ${esc(ev.detail)}</span></span>`);
-    case "review":      return say(`<span class="${ev.verdict==="approve"?"ok":"bad"}">review ${esc(ev.verdict)}</span> <span class="faint">${esc(ev.summary??"")}</span>`
+    case "review":      work(`review ${ev.verdict}`);
+                        return say(`<span class="${ev.verdict==="approve"?"ok":"bad"}">review ${esc(ev.verdict)}</span> <span class="faint">${esc(ev.summary??"")}</span>`
                                    + (ev.findings||[]).map((f)=>`\n   <span class="bad">·</span> <span class="faint">${esc(f)}</span>`).join(""));
-    case "final":       return say(`<span class="ok">done</span>`);
+    case "final":       work(`${ev.agent} · done`);
+                        return say(`<span class="ok">done</span>`);
     default:            return say(`<span class="faint">${esc(ev.kind)}</span>`);
   }
 }
@@ -1078,6 +1290,23 @@ async function refreshModels() {
     (inUse[r.resolved_model] = inUse[r.resolved_model] || []).push(r.name);
   });
 
+  // "default" sends no think field at all and leaves the model to decide. The
+  // rest need Ollama's native API, which complete()/stream() switch to on their
+  // own — the OpenAI-compatible endpoint accepts the field and ignores it.
+  const EFFORTS = window._efforts || ["default", "off", "low", "medium", "high", "max"];
+  const effortOf = (name) =>
+    (window._agents || []).find((a) => a.name === name)?.effort || "default";
+  const effortCell = (agents) => agents.length
+    ? `<div class="effort-cell">${agents.map((a) => {
+        const now = effortOf(a);
+        return `<span class="effort-pair"><span>${esc(a)}</span>
+          <select class="effort${now !== "default" ? " set" : ""}" data-agent="${esc(a)}"
+                  title="How hard ${esc(a)} thinks before answering">
+            ${EFFORTS.map((e) => `<option value="${e}"${e === now ? " selected" : ""}>${e}</option>`).join("")}
+          </select></span>`;
+      }).join("")}</div>`
+    : "-";
+
   const cell = (mm, cap) => {
     if (!(cap in (mm.probed || {}))) return `<td class="faint" title="never tested">·</td>`;
     const ok = mm.probed[cap];
@@ -1094,9 +1323,31 @@ async function refreshModels() {
         <td>${mm.speed ? Math.round(mm.speed) : "-"}</td>
         <td>$${mm.cost.toFixed(2)}</td><td>${Math.round(mm.context / 1000)}k</td>
         ${caps.map((c) => cell(mm, c)).join("")}
-        <td>${(inUse[mm.name] || []).join(", ") || "-"}</td></tr>`).join("");
+        <td>${effortCell(inUse[mm.name] || [])}</td></tr>`).join("");
 
   $("#modelmatrix").innerHTML = `<table><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+
+  $("#modelmatrix").querySelectorAll("select.effort").forEach((sel) => {
+    sel.onchange = async () => {
+      const was = (window._agents || []).find((a) => a.name === sel.dataset.agent)?.effort
+                  || "default";
+      sel.disabled = true;
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(sel.dataset.agent)}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ effort: sel.value }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: "could not save" }));
+          sel.value = was;                       // put the control back
+          alert(err.detail);
+          return;
+        }
+        sel.classList.toggle("set", sel.value !== "default");
+        await loadAgents();                      // keep _agents in step
+      } finally { sel.disabled = false; }
+    };
+  });
 
   const split = meta.discriminating || [];
   const uniform = caps.filter((c) => !split.includes(c));
@@ -1230,19 +1481,44 @@ function renderAttachments() {
   box.hidden = attached.length === 0;
   box.innerHTML = attached.map((a, i) => `
     <span class="chip-file${a.pending ? " busy" : ""}">
-      <span class="kind">${a.pending ? "…" : esc(a.kind)}</span>
+      ${a.preview ? `<img class="thumb" src="${a.preview}" alt="">`
+                  : `<span class="kind">${a.pending ? "…" : esc(a.kind)}</span>`}
       <span>${esc(a.name)}</span>
-      ${a.pending ? "" : `<button class="drop" data-i="${i}" title="Remove">✕</button>`}
-    </span>`).join("");
+      ${a.pending ? "" : `<button class="drop" data-i="${i}" title="Remove ${esc(a.name)}"
+        aria-label="Remove ${esc(a.name)}"><svg viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/>
+        </svg></button>`}
+    </span>`).join("") +
+    (attached.length > 1
+      ? `<button type="button" class="chip-clear" id="chip-clear">Remove all</button>` : "");
   box.querySelectorAll(".drop").forEach((b) => b.onclick = () => {
-    attached.splice(Number(b.dataset.i), 1);
+    const [gone] = attached.splice(Number(b.dataset.i), 1);
+    if (gone?.preview) URL.revokeObjectURL(gone.preview);
     renderAttachments();
   });
+  const clear = box.querySelector("#chip-clear");
+  if (clear) clear.onclick = () => {
+    attached.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
+    attached = [];
+    renderAttachments();
+  };
+}
+
+// A pasted bitmap arrives as "image.png", or with no name at all; a stamp keeps
+// a run of them apart in the uploads folder.
+function namedFile(file) {
+  const generic = !file.name || file.name === "image.png" || file.name === "blob";
+  if (!generic) return file;
+  const ext = ((file.type || "image/png").split("/")[1] || "png").replace("jpeg", "jpg");
+  const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+  return new File([file], `pasted-${stamp}.${ext}`, { type: file.type });
 }
 
 async function uploadFiles(files) {
   for (const file of files) {
     const entry = { name: file.name, pending: true };
+    // Shown straight from the local file: no round trip, no second fetch.
+    if (file.type.startsWith("image/")) entry.preview = URL.createObjectURL(file);
     attached.push(entry);
     renderAttachments();
 
@@ -1286,13 +1562,28 @@ panel.addEventListener("drop", (e) => {
   e.preventDefault();
   dragDepth = 0;
   panel.classList.remove("dropping");
-  uploadFiles([...e.dataTransfer.files]);
+  uploadFiles([...e.dataTransfer.files].map(namedFile));
 });
 
-// Pasting a screenshot is the same gesture by another route.
+// Pasting a screenshot or a file is the same gesture by another route. The
+// clipboard exposes files two ways and some sources only fill `items`, so both
+// are read; whatever is taken is kept out of the textarea, which would
+// otherwise receive the file's path as plain text.
 document.addEventListener("paste", (e) => {
-  const files = [...(e.clipboardData?.files || [])];
-  if (files.length && view === "chat") uploadFiles(files);
+  if (!$("#view-chat").classList.contains("on")) return;
+  const data = e.clipboardData;
+  if (!data) return;
+  const files = [...(data.files || [])];
+  if (!files.length) {
+    for (const item of data.items || []) {
+      if (item.kind !== "file") continue;
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  if (!files.length) return;          // ordinary text paste, leave it alone
+  e.preventDefault();
+  uploadFiles(files.map(namedFile));
 });
 
 function attachmentPreamble() {
@@ -1305,6 +1596,18 @@ function attachmentPreamble() {
 /* ---------- chat ---------- */
 let conversationId = null;
 let sending = false;
+
+const LAST_CHAT = "bolt.conversation";
+
+// Storage throws in a private window and can come back empty; losing the
+// pointer only costs us the restore, so every access is best-effort.
+function setConversation(id) {
+  conversationId = id || null;
+  try {
+    if (conversationId) localStorage.setItem(LAST_CHAT, conversationId);
+    else localStorage.removeItem(LAST_CHAT);
+  } catch (err) { /* no storage; the session just will not survive a reload */ }
+}
 
 // Deliberately small: enough markdown for a model reply to read well, without
 // pulling a parser into a page that must stay a single file.
@@ -1452,7 +1755,7 @@ async function rate(turnId, rating, row, note = null) {
 
   // A thumbs-down reworks the answer rather than just recording a complaint.
   showThinking();
-  noteStep("rethinking your question");
+  work("rethinking your question");
   try {
     const res = await fetch(`/api/turns/${turnId}/feedback`, {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1586,10 +1889,36 @@ async function editLast() {
   loadThreads();
 }
 
-function scrollThread() {
+// A reply still being written must not yank the view out from under you. The
+// thread follows the stream only while you are already at the bottom; scroll up
+// to read and it stays put until you come back down, by hand or by the button.
+//
+// The flag is kept by the scroll handler rather than measured at append time:
+// once new content has been added the reader is no longer at the bottom by
+// measurement, even though they never moved.
+const THREAD_STICK = 120;        // px of slack that still counts as the bottom
+let threadStuck = true;
+
+function threadAtBottom() {
   const t = $("#thread");
-  t.scrollTop = t.scrollHeight;
+  return t.scrollHeight - t.scrollTop - t.clientHeight <= THREAD_STICK;
 }
+
+function scrollThread(force) {
+  const t = $("#thread");
+  if (!force && !threadStuck) return;
+  t.scrollTop = t.scrollHeight;
+  threadStuck = true;
+  $("#tolatest").classList.remove("show");
+}
+
+$("#thread").addEventListener("scroll", () => {
+  threadStuck = threadAtBottom();
+  // The button is only an answer to a reply running away from you.
+  $("#tolatest").classList.toggle("show", !threadStuck && sending);
+});
+
+$("#tolatest").onclick = () => scrollThread(true);
 
 // While a reply streams it is appended into one live bubble, which the finished
 // response then replaces with properly rendered markdown.
@@ -1599,11 +1928,25 @@ let streamText = "";
 function liveBubble() {
   let el = document.getElementById("streaming");
   if (!el) {
-    clearThinking();
     el = document.createElement("div");
     el.id = "streaming";
     el.className = "turn assistant";
-    el.innerHTML = `<div class="bubble"><div class="who"></div><div class="live"></div></div>`;
+    el.innerHTML = `<div class="bubble"><div class="who"></div>
+      <div class="worklog${workOpen ? " open" : ""}">
+        <button class="worklog-head" type="button" aria-expanded="${workOpen}">
+          <img class="worklog-avatar" src="${stageSrc("running")}" alt="Bolt is working"
+               width="48" height="48">
+          <span class="worklog-label">Working</span>
+          <span class="worklog-time">0:00</span>
+          <span class="worklog-now"></span>
+          <span class="worklog-chev"><svg viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></span>
+        </button>
+        <div class="worklog-steps"></div>
+      </div>
+      <div class="live"></div></div>`;
+    el.querySelector(".worklog-head").onclick = () => toggleWork();
     $("#thread").appendChild(el);
   }
   return el;
@@ -1620,35 +1963,517 @@ function streamDelta(agent, text) {
 }
 
 function endStream() {
+  clearThinking();
   document.getElementById("streaming")?.remove();
   streamTask = null;
   streamText = "";
 }
 
-function showThinking() {
-  const el = document.createElement("div");
-  el.className = "turn assistant";
-  el.id = "thinking";
-  el.innerHTML = `<div class="bubble"><div class="thinking">
-      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-      <span id="thinking-step">working…</span></div></div>`;
-  $("#thread").appendChild(el);
+// One bubble serves the whole reply: the work strip appears first, the streamed
+// text fills in underneath it, and the strip goes when the answer is final.
+const WORK_STEPS = 5;       // older lines fall off the top
+const WORK_OPEN = "bolt.worklog";
+let workStart = 0;
+let workTimer = null;
+let workSteps = [];
+
+// Collapsed unless you have opened it before; storage may be unavailable.
+let workOpen = (() => {
+  try { return localStorage.getItem(WORK_OPEN) === "1"; } catch (err) { return false; }
+})();
+
+function toggleWork(on) {
+  workOpen = on === undefined ? !workOpen : on;
+  try { localStorage.setItem(WORK_OPEN, workOpen ? "1" : "0"); } catch (err) { /* no storage */ }
+  const box = document.querySelector("#streaming .worklog");
+  if (box) {
+    box.classList.toggle("open", workOpen);
+    box.querySelector(".worklog-head").setAttribute("aria-expanded", String(workOpen));
+  }
   scrollThread();
 }
 
-function clearThinking() { document.getElementById("thinking")?.remove(); }
+// The avatar carries the state the text cannot: the cat runs while Bolt works,
+// and the lightning mark takes over the moment the answer is final.
+const STAGES = {
+  running:  "/assets/anim/bolt-running.webp",
+  complete: "/assets/anim/bolt-complete.webp",
+};
+let workStage = "";
+
+const stillPreferred = () =>
+  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+// Motion is decorative here, so anyone who asked for less gets the static mark.
+function stageSrc(stage) {
+  return stillPreferred() ? "/assets/logo-512.png" : (STAGES[stage] || STAGES.running);
+}
+
+function setStage(stage) {
+  if (!STAGES[stage] || stage === workStage) return;   // resetting src restarts the loop
+  workStage = stage;
+  const img = document.querySelector("#streaming .worklog-avatar");
+  if (img) img.src = stageSrc(stage);
+}
+
+function elapsed(ms) {
+  const total = Math.floor(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function paintElapsed() {
+  const t = document.querySelector("#streaming .worklog-time");
+  if (t) t.textContent = elapsed(Date.now() - workStart);
+}
+
+function showThinking() {
+  workStart = Date.now();
+  workSteps = [];
+  workStage = "running";
+  doneWork = null;
+  liveBubble();
+  paintElapsed();
+  clearInterval(workTimer);
+  workTimer = setInterval(paintElapsed, 1000);
+  scrollThread();
+}
+
+// Detached rather than destroyed: the finished turn keeps the strip so the
+// elapsed time and the steps stay inspectable after the answer lands.
+let doneWork = null;
+
+function clearThinking() {
+  clearInterval(workTimer);
+  workTimer = null;
+  const box = document.querySelector("#streaming .worklog");
+  if (!box) return;            // already detached, or never started
+  box.remove();
+  box.classList.add("done");
+  const img = box.querySelector(".worklog-avatar");
+  if (img) { img.src = stageSrc("complete"); img.alt = "Bolt has finished"; }
+  const label = box.querySelector(".worklog-label");
+  if (label) label.textContent = "Done";
+  box.querySelector(".worklog-now")?.remove();
+  doneWork = box;
+}
+
+// Called straight after the final turn is rendered, so the strip rides along.
+function mountWork(turn) {
+  if (!doneWork || !turn) { doneWork = null; return; }
+  const bubble = turn.querySelector(".bubble");
+  const who = bubble?.querySelector(".who");
+  if (bubble) who ? who.after(doneWork) : bubble.prepend(doneWork);
+  doneWork.querySelector(".worklog-head").onclick = () => {
+    doneWork = null;        // the handler outlives the variable
+    const box = turn.querySelector(".worklog");
+    workOpen = !workOpen;
+    try { localStorage.setItem(WORK_OPEN, workOpen ? "1" : "0"); } catch (err) { /* no storage */ }
+    box.classList.toggle("open", workOpen);
+    box.querySelector(".worklog-head").setAttribute("aria-expanded", String(workOpen));
+  };
+  doneWork = null;
+}
 
 // The live trace already knows what the agents are doing; surface the useful
 // parts inside the bubble instead of making people watch another panel.
 function noteStep(text) {
-  const step = document.getElementById("thinking-step");
-  if (step) { step.textContent = text; scrollThread(); }
+  if (!text) return;
+  // The same step repeated adds nothing but noise.
+  if (workSteps[workSteps.length - 1] === text) return;
+  workSteps.push(text);
+  if (workSteps.length > WORK_STEPS) workSteps.shift();
+  const now = document.querySelector("#streaming .worklog-now");
+  if (now) now.textContent = text;
+  const box = document.querySelector("#streaming .worklog-steps");
+  if (!box) return;
+  box.innerHTML = workSteps.map((t) => `<div>${esc(t)}</div>`).join("");
+  scrollThread();
 }
+
+// Only while a reply is in flight — these events also fire for background tasks.
+function work(text) { if (sending) noteStep(text); }
 
 let inflight = null;      // AbortController for the reply being generated
 
+// The 3D controller is set up by the module at the end of the page, so it may
+// not exist yet — and on a machine without WebGL it never will.
+// Parked, it looks at you; running, it turns side-on, which is the only way a
+// gallop reads. Only a trick drives this — the pet is yours, not a progress bar.
+// The chat already reports itself through the work strip and its avatar, and two
+// things galloping at once just read as noise.
+function petState(mode) {
+  try {
+    window.boltPet?.setState(mode);
+    window.boltPet?.setDirection(mode === "working" ? "right" : "front");
+  } catch (err) { /* disposed */ }
+}
+
+function setPet(working) {
+  const pet = $("#pet");
+  if (!pet) return;
+  pet.classList.toggle("running", working);
+  // Deliberately no state change here: a reply in flight leaves the cat alone.
+  // The sprite fallback is a run cycle either way; only reduced motion stills it.
+  const img = pet.querySelector("img");
+  const want = stillPreferred() ? "/assets/logo-512.png" : STAGES.running;
+  // Reassigning src restarts the loop, so only touch it on a real change.
+  if (!img.src.endsWith(want)) img.src = want;
+}
+
+// Petting it: a pounce, and a word on what Bolt is up to. The cat is the only
+// thing on screen that is always visible, so a click is the cheapest status check
+// there is — mid-reply it reports the live step and the clock.
+const PET_QUIPS = ["mrrp", "purr\u2026", "*blink*", "ready when you are",
+                   "ask me something", "*stretches*"];
+const PET_ENOUGH = "ok, ok \u2014 that tickles";
+let petPokes = 0;
+let petSayTimer = null;
+let petPokeTimer = null;
+let petCalmTimer = null;
+
+function petLine() {
+  if (sending) {
+    const step = workSteps[workSteps.length - 1];
+    const clock = workStart ? elapsed(Date.now() - workStart) : "0:00";
+    return step ? `${step} \u00b7 ${clock}` : `Working \u00b7 ${clock}`;
+  }
+  // Leaning on the cat gets a different answer than petting it once.
+  if (petPokes > 4) return PET_ENOUGH;
+  return PET_QUIPS[(petPokes - 1) % PET_QUIPS.length];
+}
+
+function petSay(text) {
+  const bubble = document.querySelector("#pet .pet-say");
+  if (!bubble) return;
+  bubble.textContent = text;
+  bubble.classList.add("show");
+  clearTimeout(petSayTimer);
+  petSayTimer = setTimeout(() => bubble.classList.remove("show"), 2400);
+}
+
+// Park it where you like: dragged position survives a reload, and the cat keeps
+// ambling from wherever you set it down.
+const PET_POS = "bolt.pet";
+const PET_SIZES = [64, 88, 120];
+const PET_SIZE_KEY = "bolt.pet.size";
+// Read before first placement: every clamp is measured against the live box.
+let PET_SIZE = (() => {
+  try { return PET_SIZES.includes(+localStorage.getItem(PET_SIZE_KEY))
+    ? +localStorage.getItem(PET_SIZE_KEY) : 88; } catch (err) { return 88; }
+})();
+const PET_EDGE = 8;        // never flush against the window edge
+let petX = 0, petY = 0;    // where it stands this instant, mid-trick included
+let petAnchor = null;      // the resting spot; only a drag or a nudge moves it
+let petDragged = false;    // a drag ends in a click, which is not a poke
+
+function placePet(x, y, save) {
+  const pet = $("#pet");
+  if (!pet) return;
+  x = Math.min(Math.max(x, PET_EDGE), innerWidth - PET_SIZE - PET_EDGE);
+  y = Math.min(Math.max(y, PET_EDGE), innerHeight - PET_SIZE - PET_EDGE);
+  pet.style.left = `${x}px`;
+  pet.style.top = `${y}px`;
+  pet.style.right = "auto";
+  pet.style.bottom = "auto";
+  petX = x;
+  petY = y;
+  pet.classList.toggle("say-left", x < 210);
+  pet.classList.toggle("say-below", y < 46);
+  if (save) {
+    petAnchor = { x, y };
+    try { localStorage.setItem(PET_POS, JSON.stringify({ x, y })); } catch (err) { /* no storage */ }
+  }
+}
+
+function petParked() {
+  try { return JSON.parse(localStorage.getItem(PET_POS) || "null"); } catch (err) { return null; }
+}
+
+// Where it sits before anyone drags it: the chat's right gutter, above the composer.
+function petHome() {
+  const at = petParked();
+  if (at && Number.isFinite(at.x) && Number.isFinite(at.y)) return at;
+  return { x: innerWidth - 20 - PET_SIZE, y: innerHeight - 96 - PET_SIZE };
+}
+
+(function restorePet() {
+  const pet = $("#pet");
+  if (pet) { pet.style.width = `${PET_SIZE}px`; pet.style.height = `${PET_SIZE}px`; }
+  const at = petHome();
+  placePet(at.x, at.y, false);
+  petAnchor = { x: petX, y: petY };     // post-clamp, so it is a real spot
+})();
+
+// A window shrunk past the cat would otherwise strand it off screen. The stored
+// spot is left alone, so it returns there once there is room again.
+addEventListener("resize", () => {
+  const at = petHome();
+  placePet(at.x, at.y, false);
+});
+
+(function dragPet() {
+  const pet = $("#pet");
+  const tap = pet?.querySelector(".pet-tap");
+  if (!tap) return;
+  let from = null;
+  let nudgeTimer = null;
+
+  // Belt and braces with draggable="false": no native drag, ever.
+  tap.addEventListener("dragstart", (e) => e.preventDefault());
+
+  tap.addEventListener("pointerenter", () => pet.classList.add("hover"));
+  // Capture swallows boundary events mid-drag; the leave arrives on release.
+  tap.addEventListener("pointerleave", () => { if (!from) pet.classList.remove("hover"); });
+
+  tap.addEventListener("pointerdown", (e) => {
+    if (e.button) return;                        // primary button or touch only
+    // Mid-dash this is where it has got to, not where the transition is headed.
+    const box = pet.getBoundingClientRect();
+    petTrickToken += 1;                          // cancels a trick mid-stride
+    pet.style.transition = "";
+    placePet(box.left, box.top, false);          // or it would jump to the target
+    from = { px: e.clientX, py: e.clientY, x: box.left, y: box.top, moved: false };
+    petDragged = false;
+    tap.setPointerCapture(e.pointerId);
+  });
+
+  tap.addEventListener("pointermove", (e) => {
+    if (!from) return;
+    const dx = e.clientX - from.px;
+    const dy = e.clientY - from.py;
+    // A few pixels of slop, so petting it never counts as a drag.
+    if (!from.moved && Math.hypot(dx, dy) < 4) return;
+    if (!from.moved) {
+      from.moved = petDragged = true;
+      // Pinning it where it stands first keeps the wander from jumping it.
+      placePet(from.x, from.y, false);
+      pet.classList.add("dragging");
+    }
+    placePet(from.x + dx, from.y + dy, false);
+  });
+
+  const drop = () => {
+    if (!from) return;
+    const moved = from.moved;
+    from = null;
+    if (!moved) return;
+    // Read before the class comes off: the amble restarts from this anchor.
+    const box = pet.getBoundingClientRect();
+    pet.classList.remove("dragging");
+    placePet(box.left, box.top, true);
+    petSay("parked here");
+  };
+  tap.addEventListener("pointerup", drop);
+  tap.addEventListener("pointercancel", drop);
+
+  // Same move without a mouse. Holding the amble off keeps each nudge exact.
+  tap.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 24 : 8;
+    const by = { ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+                 ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (!by) return;
+    e.preventDefault();
+    const box = pet.getBoundingClientRect();
+    pet.classList.add("dragging");
+    placePet(box.left + by[0], box.top + by[1], true);
+    clearTimeout(nudgeTimer);
+    nudgeTimer = setTimeout(() => pet.classList.remove("dragging"), 600);
+  });
+})();
+
+// Some people want a quiet window. The cat is on unless it has been switched off.
+const PET_ON = "bolt.pet.on";
+
+function petEnabled() {
+  try { return localStorage.getItem(PET_ON) !== "0"; } catch (err) { return true; }
+}
+
+// The coat and its markings are painted by the fur shader, which bakes them in
+// when it compiles — so a colour change rebuilds the pet rather than tweaking a
+// material. Rare enough to be free, which is why this listens for `change` and
+// not every drag of the picker.
+const PET_COAT = "bolt.pet.coat";
+const PET_SPOTS = "bolt.pet.spots";
+const PET_EYES = "bolt.pet.eyes";
+// The drop's own colours, so Reset means what the author intended.
+const PET_COLORS = { cream: "#f9e7cd", orange: "#d98324", iris: "#c68519" };
+const HEX = /^#[0-9a-f]{6}$/i;
+
+function petColors() {
+  const read = (key, fallback) => {
+    try {
+      const value = localStorage.getItem(key);
+      return HEX.test(value || "") ? value : fallback;
+    } catch (err) { return fallback; }
+  };
+  return { cream: read(PET_COAT, PET_COLORS.cream),
+           orange: read(PET_SPOTS, PET_COLORS.orange),
+           iris: read(PET_EYES, PET_COLORS.iris) };
+}
+
+// The module below reads this when it first builds the pet.
+window.petPalette = petColors;
+
+function syncPetColors() {
+  const colors = petColors();
+  const coat = $("#pet-coat"), spots = $("#pet-spots"), eyes = $("#pet-eyes");
+  if (coat) coat.value = colors.cream;
+  if (spots) spots.value = colors.orange;
+  if (eyes) eyes.value = colors.iris;
+}
+
+function repaintPet() {
+  syncPetColors();
+  petTrickToken += 1;              // the pet it was mid-trick with is about to go
+  const pet = $("#pet");
+  if (pet) pet.style.transition = "";
+  window.boltPetRecolor?.(petColors());
+}
+
+function setPetColor(key, hex) {
+  if (!HEX.test(hex)) return;
+  try { localStorage.setItem(key, hex); } catch (err) { /* no storage */ }
+  repaintPet();
+}
+
+$("#pet-coat").onchange = (e) => setPetColor(PET_COAT, e.target.value);
+$("#pet-spots").onchange = (e) => setPetColor(PET_SPOTS, e.target.value);
+$("#pet-eyes").onchange = (e) => setPetColor(PET_EYES, e.target.value);
+$("#pet-colors-reset").onclick = () => {
+  try {
+    [PET_COAT, PET_SPOTS, PET_EYES].forEach((key) => localStorage.removeItem(key));
+  } catch (err) { /* no storage */ }
+  repaintPet();
+  petSay("back to ginger");
+};
+
+function applyPet() {
+  const on = petEnabled();
+  const pet = $("#pet");
+  if (pet) pet.hidden = !on;
+  const box = $("#pet-enabled");
+  if (box) box.checked = on;
+  document.querySelectorAll("#pet-size button").forEach((b) =>
+    b.classList.toggle("on", +b.dataset.size === PET_SIZE));
+  syncPetColors();
+}
+
+// The renderer follows the container on its own (it watches for resizes), so
+// this only has to move the box and keep it inside the window.
+function setPetSize(px) {
+  if (!PET_SIZES.includes(px)) return;
+  PET_SIZE = px;
+  try { localStorage.setItem(PET_SIZE_KEY, String(px)); } catch (err) { /* no storage */ }
+  const pet = $("#pet");
+  if (pet) { pet.style.width = `${px}px`; pet.style.height = `${px}px`; }
+  const at = petAnchor || petHome();
+  placePet(at.x, at.y, Boolean(petAnchor));   // re-clamp against the new box
+  applyPet();
+}
+
+document.querySelectorAll("#pet-size button").forEach((b) =>
+  b.onclick = () => setPetSize(+b.dataset.size));
+
+$("#pet-home").onclick = () => {
+  const pet = $("#pet");
+  if (pet) pet.style.transition = "";
+  petTrickToken += 1;                          // whatever it was doing, stop
+  try { localStorage.removeItem(PET_POS); } catch (err) { /* no storage */ }
+  petAnchor = null;
+  const at = petHome();
+  placePet(at.x, at.y, true);
+  petSay("back in my corner");
+};
+
+$("#pet-enabled").onchange = (e) => {
+  try { localStorage.setItem(PET_ON, e.target.checked ? "1" : "0"); } catch (err) { /* no storage */ }
+  applyPet();
+};
+
+applyPet();
+
+// A click should get you a cat, not a wobble. It sprints a lap or turns on the
+// spot, then comes back to exactly where it was standing — petting it must never
+// relocate it. The canvas is only its own width, so the running happens in the
+// renderer while the element itself is what travels.
+const PET_DASH = 170;          // px out, then the same back
+const PET_DASH_SPEED = 150;    // px per second, roughly its gallop on screen
+let petTrickToken = 0;         // bumped by a drag, which outranks any trick
+
+const petWait = (ms) => new Promise((done) => setTimeout(done, ms));
+
+// Moving under a transition rather than per-frame: one write, the compositor
+// does the rest, and placePet keeps the clamps and the bubble side honest.
+// Distance sets the clock so the run reads at one speed wherever it starts.
+function petGlide(x, y) {
+  const pet = $("#pet");
+  const ms = Math.max(120, Math.round((Math.hypot(x - petX, y - petY) / PET_DASH_SPEED) * 1000));
+  pet.style.transition = `left ${ms}ms linear, top ${ms}ms linear`;
+  placePet(x, y, false);
+  return petWait(ms + 20).then(() => { pet.style.transition = ""; });
+}
+
+async function petTrick() {
+  const three = window.boltPet;
+  const pet = $("#pet");
+  if (!three || !pet) return false;
+  const token = ++petTrickToken;
+  const live = () => token === petTrickToken;   // a drag or a second poke wins
+  // Always the resting spot, never wherever a cancelled trick left it standing.
+  const { x: homeX, y: homeY } = petAnchor || { x: petX, y: petY };
+  try {
+    three.setState("working");
+    if (Math.random() < 0.35) {
+      // Show off the third dimension: a full turn on the spot.
+      for (const facing of ["right", "back", "left", "front"]) {
+        three.setDirection(facing);
+        await petWait(420);
+        if (!live()) return true;
+      }
+    } else {
+      // Room on the left, or it runs the other way.
+      const left = homeX - PET_EDGE >= PET_DASH;
+      three.setDirection(left ? "left" : "right");
+      await petGlide(homeX + (left ? -PET_DASH : PET_DASH), homeY);
+      if (!live()) return true;
+      three.setDirection(left ? "right" : "left");
+      await petWait(260);                        // the turn needs a beat to read
+      if (!live()) return true;
+      await petGlide(homeX, homeY);
+    }
+  } finally {
+    if (live()) petState("idle");
+  }
+  return true;
+}
+
+function pokePet() {
+  const pet = $("#pet");
+  if (!pet) return;
+  if (petDragged) { petDragged = false; return; }   // that click ended a drag
+  petPokes += 1;
+  clearTimeout(petCalmTimer);
+  petCalmTimer = setTimeout(() => (petPokes = 0), 6000);
+  petSay(petLine());
+  if (stillPreferred()) return;
+  // With the renderer up the cat answers for itself; the squash is what the
+  // fallback sprite has instead. petTrick is async, so ask before calling it.
+  if (window.boltPet) { petTrick(); return; }
+  // Restarting the animation needs the class gone and a reflow in between.
+  pet.classList.remove("poke");
+  void pet.offsetWidth;
+  pet.classList.add("poke");
+  clearTimeout(petPokeTimer);
+  petPokeTimer = setTimeout(() => pet.classList.remove("poke"), 500);
+}
+
+document.querySelector("#pet .pet-tap").onclick = pokePet;
+
 function setSending(on) {
   sending = on;
+  setPet(on);
+  // Scrolled up when a reply starts? Offer the way back down right away.
+  $("#tolatest").classList.toggle("show", on && !threadStuck);
   if (!on) { streamTask = null; streamText = ""; }
   $("#send").textContent = on ? "■" : "↑";
   $("#send").title = on ? "Stop generating" : "Send";
@@ -1754,6 +2579,7 @@ async function send(text) {
   $("#prompt").value = "";
   $("#prompt").style.height = "auto";
   addTurn({ role: "user", content: prompt });
+  scrollThread(true);               // your own message always comes into view
   attached = [];
   renderAttachments();
   showThinking();
@@ -1770,9 +2596,9 @@ async function send(text) {
     endStream();
     clearThinking();
     clearReplyTo();
-    conversationId = d.conversation_id || conversationId;
-    addTurn({ role: "assistant", content: d.reply || "(no reply)", agent: d.agent,
-              turnId: d.turn_id });
+    setConversation(d.conversation_id || conversationId);
+    mountWork(addTurn({ role: "assistant", content: d.reply || "(no reply)", agent: d.agent,
+                        turnId: d.turn_id }));
     if ($("#chattitle").textContent === "New conversation") {
       $("#chattitle").textContent = prompt.slice(0, 60);
     }
@@ -1807,16 +2633,14 @@ $("#prompt").addEventListener("input", (e) => {
 document.querySelectorAll(".chip").forEach((c) => c.onclick = () => send(c.textContent));
 
 $("#newchat").onclick = () => {
-  conversationId = null;
+  setConversation(null);
   clearReplyTo();
   $("#chattitle").textContent = "New conversation";
   $("#chatmeta").textContent = "";
   $("#thread").innerHTML = `<div class="welcome">
-      <canvas id="waves-hero" width="360" height="96"></canvas>
+      <img class="hero-logo" src="/assets/logo-512.png" alt="">
       <h3>Bolt</h3>
       <p class="faint">Ask anything, or hold the mic and say “Bolt, …”.</p></div>`;
-  const hero = new Waves($("#waves-hero"));
-  hero.setLevel(0.16); hero.start();
   loadThreads();
 };
 
@@ -1846,8 +2670,10 @@ async function loadThreads() {
 
 async function openThread(id) {
   clearReplyTo();
-  const d = await fetch(`/api/conversations/${id}`).then((r) => r.json());
-  conversationId = id;
+  const res = await fetch(`/api/conversations/${id}`);
+  if (!res.ok) { setConversation(null); return false; }
+  const d = await res.json();
+  setConversation(id);
   $("#chattitle").textContent = d.conversation.title || "conversation";
   $("#chatmeta").textContent = `${d.turns.length} turns`;
   $("#thread").innerHTML = "";
@@ -1864,7 +2690,22 @@ async function openThread(id) {
     });
   });
   markEditable();
+  scrollThread(true);          // a freshly opened conversation starts at its end
   loadThreads();
+  return true;
+}
+
+// A refresh should land back where you were, not in a blank conversation.
+async function restoreThread() {
+  let last = null;
+  try { last = localStorage.getItem(LAST_CHAT); } catch (err) { /* no storage */ }
+  try {
+    if (last && await openThread(last)) return;
+    loadThreads();
+  } finally {
+    // Whether it restored or fell back, the welcome may show from here on.
+    document.documentElement.classList.remove("restoring");
+  }
 }
 
 
@@ -2069,6 +2910,7 @@ $("#gear").onclick = async () => {
   buildPalettePicker();
   buildBackgroundPicker();
   applyAppearance();
+  applyPet();
   $("#appearance").hidden = false;
   showSettingsPane(settingsPane);
 };
@@ -2080,6 +2922,7 @@ function showSettingsPane(name) {
   document.querySelectorAll(".snav").forEach((b) =>
     b.classList.toggle("on", b.dataset.pane === name));
   $("#pane-appearance").hidden = name !== "appearance";
+  $("#pane-pet").hidden = name !== "pet";
   $("#pane-voice").hidden = name !== "voice";
   $("#pane-connection").hidden = name !== "connection";
   $("#pane-agents").hidden = name !== "agents";
@@ -2087,6 +2930,7 @@ function showSettingsPane(name) {
   // "Use an image" belongs to Appearance; it would be nonsense next to Usage.
   $("#settings-heading").textContent = {
     usage: "Usage", voice: "Voice", connection: "Connection", agents: "Agents",
+    pet: "Pet",
   }[name] || "Appearance";
   $(".settings-body").scrollTop = 0;
   if (name === "usage") loadUsage();
@@ -2249,14 +3093,56 @@ async function loadAgentEditor() {
     allTools.length ? Promise.resolve(allTools) : fetch("/api/tools").then((r) => r.json()),
   ]);
   allTools = tools;
+  // The settings panel can be opened before the overview has ever loaded, and
+  // the model picker below needs the catalogue.
+  if (!(window._models || []).length) await loadAgents();
   $("#agent-editor").hidden = true;
-  $("#agent-list").innerHTML = agents.map((a) => `
+  // The model was a read-only chip here, with the only picker over on the
+  // overview page. An agent's model is an agent setting, so it belongs in the
+  // row you are already looking at.
+  const catalogue = window._models || [];
+  $("#agent-list").innerHTML = agents.map((a) => {
+    const pinned = a.model_source === "override";
+    const needsVision = (a.requires || []).includes("vision");
+    const usable = catalogue.filter((mm) => !needsVision || mm.vision);
+    const options = usable.map((mm) =>
+      `<option value="${esc(mm.name)}"${pinned && a.resolved_model === mm.name ? " selected" : ""}>${esc(mm.name)}</option>`).join("");
+    return `
     <div class="rowcard">
       <div class="grow"><b>${esc(a.name)}</b><i>${esc(a.blurb || "no description")}</i></div>
-      <span class="tag">${esc(a.resolved_model || a.model)}</span>
+      <select class="agent-model${pinned ? " pinned" : ""}" data-agent="${esc(a.name)}"
+              title="${esc(a.model_reason || "")}">
+        <option value="auto"${pinned ? "" : " selected"}>auto — ${esc(a.resolved_model || a.model)}</option>
+        ${options}
+      </select>
       ${a.builtin ? "" : '<span class="tag ok">yours</span>'}
       <button type="button" class="agent-edit" data-agent="${esc(a.name)}">Edit</button>
-    </div>`).join("");
+    </div>`;
+  }).join("");
+
+  document.querySelectorAll(".agent-model").forEach((sel) => {
+    const was = sel.value;
+    sel.onchange = async () => {
+      sel.disabled = true;
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(sel.dataset.agent)}/model`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: sel.value }),
+        });
+        if (!res.ok) {
+          // A pin the agent cannot use is refused with a reason — say it and
+          // put the control back rather than leaving a lie on screen.
+          const err = await res.json().catch(() => ({ detail: "could not pin that model" }));
+          sel.value = was;
+          alert(err.detail);
+          return;
+        }
+        await loadAgents();        // resolved models and the overview change too
+        loadAgentEditor();
+        refreshOverview();
+      } finally { sel.disabled = false; }
+    };
+  });
   document.querySelectorAll(".agent-edit").forEach((b) => b.onclick = () =>
     editAgent(agents.find((a) => a.name === b.dataset.agent)));
 }
@@ -2511,7 +3397,10 @@ function applyBackground() {
     ? `/backgrounds/${appearance.background.slice(6)}.jpg` : null;
 
   if (custom || photo) {
-    thread.style.backgroundImage = `url(${custom || photo})`;
+    // The scrim rides as a background layer above the photo: both are
+    // viewport-attached, so scrolling can never separate them.
+    thread.style.backgroundImage =
+      `linear-gradient(var(--chat-scrim), var(--chat-scrim)), url(${custom || photo})`;
     thread.style.backgroundSize = "";
     thread.classList.add("has-image");
     return;
@@ -2526,14 +3415,17 @@ function applyBackground() {
 }
 
 let photoBackgrounds = [];
+let photoRetry = null;
 
 async function loadPhotoBackgrounds() {
   try {
     const d = await fetch("/api/backgrounds").then((r) => r.json());
     photoBackgrounds = d.photos || [];
   } catch {
-    photoBackgrounds = [];
+    // Keep whatever we already had: the API being briefly down during a restart
+    // should not empty the picker.
   }
+  return photoBackgrounds;
 }
 
 function buildBackgroundPicker() {
@@ -2573,6 +3465,15 @@ function buildBackgroundPicker() {
     $("#photo-section").hidden = false;
   } else {
     $("#photo-section").hidden = true;
+    // Empty either because no photos are on disk, or because that one fetch lost
+    // a race with a server restart. Ask again in the background and redraw if
+    // they turn up, so the section cannot stay missing until a full reload.
+    if (!photoRetry) {
+      photoRetry = loadPhotoBackgrounds().then((list) => {
+        photoRetry = null;
+        if (list.length) buildBackgroundPicker();
+      });
+    }
   }
 
   $("#photo-picker").querySelectorAll(".bg-swatch").forEach((b) => b.onclick = () => {
@@ -2741,9 +3642,6 @@ class Waves {
 
 const waves = new Waves($("#waves"));
 const micWaves = new Waves($("#micwaves"));
-const heroWaves = new Waves($("#waves-hero"));
-heroWaves.setLevel(0.16);
-heroWaves.start();
 
 /* ---------- agent picker ---------- */
 function agentMenu(open) {
@@ -2925,10 +3823,11 @@ async function startRecording() {
         return;
       }
       micStatus("");
-      conversationId = d.conversation_id || conversationId;
+      setConversation(d.conversation_id || conversationId);
       addTurn({ role: "user", content: d.text || d.transcript, spoken: true });
-      addTurn({ role: "assistant", content: d.reply || "(no reply)", agent: d.agent,
-                turnId: d.turn_id });
+      scrollThread(true);
+      mountWork(addTurn({ role: "assistant", content: d.reply || "(no reply)", agent: d.agent,
+                          turnId: d.turn_id }));
       speakReply(d.reply);
       loadThreads();
     } catch (err) {
@@ -3011,10 +3910,12 @@ $("#codeform").onsubmit = async (e) => {
 
 /* ---------- boot ---------- */
 async function loadAgents() {
-  const [agents, models] = await Promise.all([
+  const [agents, models, effort] = await Promise.all([
     fetch("/api/agents").then((r) => r.json()),
     fetch("/api/models").then((r) => r.json()),
+    fetch("/api/effort").then((r) => r.json()).catch(() => null),
   ]);
+  if (effort?.choices?.length) window._efforts = effort.choices;
   window._agents = agents;
   window._models = models.models;
   window._modelmeta = models;
@@ -3042,9 +3943,43 @@ async function refresh() {
 }
 
 loadAgents().then(refresh);
-loadThreads();
+restoreThread();
 connect();
 setInterval(refresh, 5000);
+</script>
+
+<!-- The pet is procedural geometry, not a sprite: states, turns and a gallop
+     the page can drive. A module runs after the script above, so everything
+     that talks to it goes through window.boltPet and tolerates its absence. -->
+<script type="module">
+  import { createBoltPet, SIT } from "/assets/pet/bolt-pet.js";
+  import { setFurPalette } from "/assets/pet/sculpt.js";
+
+  window.BOLT_SIT = SIT;          // the sit pose is tunable from the console
+
+  const pet = document.getElementById("pet");
+  const view = pet.querySelector(".pet-view");
+
+  // A rebuild carries the mood and heading across, so recolouring mid-reply
+  // does not reset the cat to a parked idle.
+  function build() {
+    const keep = window.boltPet?.getState();
+    try { window.boltPet?.dispose(); } catch (err) { /* already gone */ }
+    window.boltPet = createBoltPet(view, { state: keep?.state ?? "idle",
+                                           direction: keep?.direction ?? "front" });
+    pet.classList.add("three");
+  }
+
+  // Colours are compiled into the fur shader, so changing them means a new pet.
+  window.boltPetRecolor = (palette) => { setFurPalette(palette); build(); };
+
+  try {
+    setFurPalette(window.petPalette?.() || {});
+    build();
+  } catch (err) {
+    // No WebGL, no context — the animated sprite is still in the markup.
+    console.warn("[bolt] 3D pet unavailable, keeping the sprite", err);
+  }
 </script>
 </body>
 </html>
