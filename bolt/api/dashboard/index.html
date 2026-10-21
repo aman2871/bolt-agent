@@ -527,6 +527,38 @@
   .bg-swatch.none::after { content: "\2014"; color: var(--faint); font-size: 13px;
                            position: absolute; inset: 0; display: grid;
                            place-content: center; }
+  /* A source is a choice, not a URL. Each card says what it can actually do,
+     so "cloud needs a key" is visible before you pick it and discover it. */
+  .source { display: flex; gap: 11px; align-items: flex-start; padding: 11px 13px;
+            border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;
+            cursor: pointer; background: var(--panel2); }
+  .source:hover { border-color: var(--dim); }
+  .source.on { border-color: var(--acc); background: color-mix(in srgb, var(--acc) 7%, var(--panel2)); }
+  .source.dead { opacity: .62; }
+  .source input[type=radio] { flex: none; min-width: 0; width: 13px; height: 13px;
+                              margin: 3px 0 0; accent-color: var(--acc); cursor: pointer; }
+  .source .body { flex: 1; min-width: 0; }
+  .source .title { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .source .title b { font-size: 12.5px; }
+  .source .why { display: block; margin-top: 3px; font-size: 11.5px; color: var(--faint);
+                 line-height: 1.5; }
+  .source .where { font-size: 10.5px; color: var(--dim); font-family: inherit; }
+  .source .extra { margin-top: 9px; display: flex; gap: 7px; align-items: center; }
+  .source .extra input { flex: 1; min-width: 0; font-size: 11.5px; padding: 5px 8px; }
+  .source .extra button { flex: none; padding: 5px 11px; font-size: 11.5px; }
+  .badge { font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+           padding: 1px 6px; border-radius: 20px; border: 1px solid var(--line);
+           color: var(--faint); }
+  .badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .badge.warn { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .mrow { display: flex; gap: 9px; align-items: baseline; padding: 6px 2px;
+          border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+          font-size: 11.5px; }
+  .mrow:last-child { border-bottom: 0; }
+  .mrow .nm { flex: 1; min-width: 0; font-family: inherit; }
+  .mrow .who { color: var(--faint); font-size: 10.5px; }
+  .mrow .det { color: var(--bad); font-size: 10.5px; max-width: 46%; text-align: right; }
+
   select.agent-model { flex: none; min-width: 0; width: auto; max-width: 230px;
                       padding: 3px 7px; font-size: 11px; font-family: inherit;
                       border-radius: 7px; border: 1px solid var(--line);
@@ -610,7 +642,7 @@
   .field-actions { display: flex; align-items: center; gap: 10px; margin: 10px 0 14px; }
   .field-actions .faint { margin-right: auto; font-size: 11px; }
   .field-actions button { padding: 7px 14px; border-radius: 9px; font-size: 12px; }
-  #ollama-save, #agent-new, #agent-save { border-color: var(--accent); color: var(--accent); }
+  #conn-recheck, #agent-new, #agent-save { border-color: var(--accent); color: var(--accent); }
   #agent-delete { border-color: var(--line); color: var(--dim); }
   #agent-delete:hover { border-color: var(--bad); color: var(--bad); }
 
@@ -915,34 +947,17 @@
     </div>
 
     <div class="settings-pane" id="pane-connection" hidden>
-      <p class="setting-label">Ollama</p>
-      <div class="field">
-        <label for="ollama-url">Endpoint</label>
-        <input id="ollama-url" type="text" spellcheck="false"
-               placeholder="http://localhost:11434/v1">
-      </div>
-      <p class="field-hint">Where Bolt sends every model request. <span id="url-explain"></span>
-        <button type="button" class="linkish" data-url="http://host.docker.internal:11434/v1">Use local Ollama</button>
-        <button type="button" class="linkish" data-url="https://ollama.com/v1">Use Ollama Cloud</button>
-      </p>
+      <p class="setting-label">Where Bolt gets its models</p>
+      <div id="source-list"></div>
 
-      <div class="field">
-        <label for="ollama-key">API key</label>
-        <div class="keybox" id="keybox">
-          <input id="ollama-key" type="password" spellcheck="false"
-                 autocomplete="off" placeholder="paste your Ollama key">
-          <button type="button" id="key-replace" hidden>Replace</button>
-          <button type="button" id="key-remove" hidden>Remove</button>
-        </div>
-      </div>
-      <p class="field-hint" id="ollama-keystate"></p>
       <div class="field-actions">
-        <button type="button" id="ollama-save">Save &amp; connect</button>
+        <button type="button" id="conn-recheck">Check again</button>
       </div>
-      <div class="usage-note" id="ollama-result">Not checked yet.</div>
+      <div class="usage-note" id="conn-status">Checking…</div>
 
       <p class="setting-label">Models</p>
-      <div id="model-list" class="modelrows"></div>
+      <div id="model-health" class="modelrows"></div>
+      <p class="pane-hint" id="model-health-note"></p>
     </div>
 
     <div class="settings-pane" id="pane-agents" hidden>
@@ -2945,145 +2960,149 @@ document.querySelectorAll(".snav").forEach((b) =>
 /* The key is written to the server's settings table and never sent back: the
    dashboard only ever sees a mask, so a shared screen cannot leak it. */
 let knownModels = [];
+let _conn = null;
+
 async function loadConnection() {
-  const c = await fetch("/api/settings/ollama").then((r) => r.json()).catch(() => null);
-  if (!c) { $("#ollama-result").textContent = "Could not read settings."; return; }
-  $("#ollama-url").value = c.base_url || "";
-  $("#ollama-url").placeholder = c.default_url || "";
-  explainUrl();
-  showKeyState(c);
-  testConnection();
+  _conn = await fetch("/api/connection").then((r) => r.json()).catch(() => null);
+  if (!_conn) { $("#conn-status").textContent = "Could not read settings."; return; }
+  renderSources();
+  checkModels();
 }
 
-/* An endpoint URL means nothing on its own — say what this one actually is. */
-function explainUrl() {
-  const url = $("#ollama-url").value.trim();
-  const what =
-    /host\.docker\.internal/.test(url)
-      ? "This one reaches the Ollama app running on your Mac from inside Bolt's container."
-    : /(localhost|127\.0\.0\.1)/.test(url)
-      ? "This one is Ollama running on this machine."
-    : /ollama\.com/.test(url)
-      ? "This is Ollama's cloud directly — it serves more models than the local app proxies, and needs your API key."
-    : url ? "A custom endpoint." : "";
-  $("#url-explain").textContent = what ? what + " " : "";
-}
-$("#ollama-url").addEventListener("input", explainUrl);
-document.querySelectorAll(".linkish[data-url]").forEach((b) => b.onclick = () => {
-  $("#ollama-url").value = b.dataset.url;
-  explainUrl();
-});
+/* A source card says what that source can actually do before you pick it —
+   "cloud needs a key" belongs here, not in a failed message an hour later. */
+function renderSources() {
+  const c = _conn;
+  const byId = Object.fromEntries((c.sources || []).map((s) => [s.id, s]));
+  const card = (id, title, why, extra) => {
+    const src = byId[id];
+    const on = c.mode === id;
+    const dead = src && !src.reachable;
+    const badge = !src ? ""
+      : src.reachable && !src.needs_key ? '<span class="badge ok">ready</span>'
+      : src.reachable && src.needs_key ? '<span class="badge warn">needs a key</span>'
+      : '<span class="badge warn">not reachable</span>';
+    return `<label class="source${on ? " on" : ""}${dead ? " dead" : ""}" data-mode="${id}">
+      <input type="radio" name="conn-mode" value="${id}"${on ? " checked" : ""}>
+      <span class="body">
+        <span class="title"><b>${title}</b>${badge}
+          <span class="where">${esc(src?.base_url || "")}</span></span>
+        <span class="why">${src?.detail ? esc(src.detail) : why}</span>
+        ${extra || ""}
+      </span>
+    </label>`;
+  };
 
-/* A saved key must look saved. An empty password box that silently means "keep
-   the old one" is indistinguishable from having no key at all. */
-function showKeyState(c) {
-  const input = $("#ollama-key");
-  if (c.key_set) {
-    input.type = "text";
-    input.value = c.key_masked;
-    input.readOnly = true;
-    input.classList.add("saved");
-    $("#key-replace").hidden = false;
-    $("#key-remove").hidden = false;
-    $("#ollama-keystate").innerHTML = "<b>Key saved.</b> It is stored on the server and never shown in full.";
-  } else {
-    input.type = "password";
-    input.value = "";
-    input.readOnly = false;
-    input.classList.remove("saved");
-    input.placeholder = "paste your Ollama key";
-    $("#key-replace").hidden = true;
-    $("#key-remove").hidden = true;
-    $("#ollama-keystate").textContent = c.from_env
-      ? "Using OLLAMA_API_KEY from the environment."
-      : "No key saved. A local Ollama does not need one; the cloud endpoint does.";
-  }
-}
-$("#key-replace").onclick = () => {
-  const input = $("#ollama-key");
-  input.type = "password"; input.value = ""; input.readOnly = false;
-  input.classList.remove("saved");
-  input.placeholder = "paste the new key";
-  input.focus();
-  $("#key-replace").hidden = true;
-  $("#ollama-keystate").textContent = "Enter a new key, then Save & connect.";
-};
-$("#key-remove").onclick = async () => {
-  await fetch("/api/settings/ollama", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ api_key: "" }),
+  const keyRow = `<span class="extra" data-stop="1">
+      <input id="conn-key" type="password" autocomplete="off" spellcheck="false"
+             placeholder="${c.key_set ? `saved (${esc(c.key_masked)}) — paste a new one to replace` : "paste your Ollama API key"}">
+      ${c.key_set ? '<button type="button" id="conn-key-clear">Remove</button>' : ""}
+    </span>`;
+
+  const customRow = `<span class="extra" data-stop="1">
+      <input id="conn-url" type="text" spellcheck="false"
+             placeholder="http://localhost:11434/v1"
+             value="${c.mode === "custom" ? esc(c.base_url) : ""}">
+    </span>`;
+
+  $("#source-list").innerHTML =
+    card("local", "Ollama on this machine",
+         "The Ollama app. Serves what you have pulled, and proxies the cloud models when it is signed in — no API key needed.") +
+    card("cloud", "Ollama Cloud",
+         "Straight to ollama.com. Cloud models only, and it needs an API key — the model list is public but nothing will answer without one.",
+         keyRow) +
+    card("custom", "Something else",
+         "Any OpenAI-compatible endpoint.", customRow);
+
+  // Typing in a card's field must not flip the radio.
+  $("#source-list").querySelectorAll('[data-stop]').forEach((el) =>
+    el.addEventListener("click", (e) => e.preventDefault()));
+  $("#source-list").querySelectorAll('input[name="conn-mode"]').forEach((radio) =>
+    radio.onchange = () => applySource(radio.value));
+  const clear = $("#conn-key-clear");
+  if (clear) clear.onclick = () => applySource("cloud", "");
+  const url = $("#conn-url");
+  if (url) url.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); applySource("custom"); }
   });
-  loadConnection();
-};
+  const key = $("#conn-key");
+  if (key) key.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); applySource("cloud"); }
+  });
+}
 
-async function testConnection() {
-  const note = $("#ollama-result");
-  note.classList.remove("warn");
-  note.textContent = "Checking…";
-  let r;
-  try { r = await fetch("/api/settings/ollama/test", { method: "POST" }).then((x) => x.json()); }
-  catch (e) { note.classList.add("warn"); note.textContent = String(e); return; }
-  if (!r.ok) {
-    note.classList.add("warn");
-    note.textContent = `Not connected: ${r.error}`;
-    $("#model-list").innerHTML = "";
+async function applySource(mode, keyOverride) {
+  const body = { mode };
+  if (mode === "custom") body.base_url = $("#conn-url")?.value.trim() || "";
+  if (keyOverride !== undefined) body.api_key = keyOverride;
+  else if (mode === "cloud") {
+    const typed = $("#conn-key")?.value.trim();
+    if (typed) body.api_key = typed;
+  }
+  $("#conn-status").textContent = "Connecting…";
+  const res = await fetch("/api/connection", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "could not switch" }));
+    $("#conn-status").classList.add("warn");
+    $("#conn-status").textContent = err.detail;
+    loadConnection();
     return;
   }
-  knownModels = r.known || [];
-  note.innerHTML = `Connected to <b>${esc(r.base_url)}</b> — ${r.models.length} model${
-    r.models.length === 1 ? "" : "s"} available.`;
-  renderModels(r.models, r.known || []);
+  showHealth(await res.json());
+  _conn = await fetch("/api/connection").then((r) => r.json()).catch(() => _conn);
+  renderSources();
+  loadAgents();                 // which model each agent resolves to may change
 }
 
-function renderModels(serving, known) {
-  const rows = serving.map((m) => {
-    const inCatalogue = known.includes(m);
-    return `<div class="rowcard">
-      <div class="grow"><b>${esc(m)}</b>
-        <i>${inCatalogue ? "in Bolt's catalogue" : "not configured — agents cannot pick it"}</i></div>
-      ${inCatalogue ? '<span class="tag ok">ready</span>'
-                    : `<button type="button" class="model-add" data-model="${esc(m)}">Add</button>`}
-    </div>`;
-  });
-  // A model in the catalogue the endpoint no longer serves is worth saying out loud.
-  known.filter((k) => !serving.includes(k)).forEach((k) => rows.push(
-    `<div class="rowcard"><div class="grow"><b>${esc(k)}</b>
-       <i>configured but not served by this endpoint</i></div>
-     <span class="tag">missing</span></div>`));
-  $("#model-list").innerHTML = rows.join("") ||
-    '<p class="faint" style="font-size:12px">No models reported.</p>';
-  document.querySelectorAll(".model-add").forEach((b) => b.onclick = async () => {
-    b.disabled = true;
-    await fetch("/api/models/catalogue", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: b.dataset.model }),
-    });
-    testConnection();
-  });
-}
-
-$("#ollama-save").onclick = async () => {
-  const btn = $("#ollama-save");
-  btn.disabled = true; btn.textContent = "Connecting…";
-  const body = { base_url: $("#ollama-url").value.trim() };
-  const key = $("#ollama-key").value.trim();
-  // A read-only box is showing the mask, not a key — never send that back.
-  if (key && !$("#ollama-key").readOnly) body.api_key = key;
+async function checkModels() {
+  $("#conn-status").textContent = "Checking every model…";
   try {
-    const r = await fetch("/api/settings/ollama", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).then((x) => x.json());
-    const note = $("#ollama-result");
-    note.classList.toggle("warn", !r.ok);
-    note.innerHTML = r.ok
-      ? `Connected to <b>${esc(r.base_url)}</b> — ${r.models.length} models available.`
-      : `Not connected: ${esc(r.error)}`;
-    if (r.ok) renderModels(r.models, r.known || []);
-    loadConnection();
-    loadAgents();                          // resolved models may have changed
-  } finally { btn.disabled = false; btn.textContent = "Save & connect"; }
-};
+    showHealth(await fetch("/api/connection/check", { method: "POST" }).then((r) => r.json()));
+  } catch {
+    $("#conn-status").textContent = "Check failed.";
+  }
+}
+
+/* Reachable is not the same as working, and a retired model is not a broken
+   connection. Say which of the two went wrong. */
+function showHealth(h) {
+  const note = $("#conn-status");
+  note.classList.toggle("warn", !h.ok || (h.blocked_agents || []).length > 0);
+  if (!h.ok) {
+    note.innerHTML = `<b>Not connected.</b> ${esc(h.error || "nothing answered")}`;
+  } else if ((h.blocked_agents || []).length) {
+    note.innerHTML = `Connected to <b>${esc(h.base_url)}</b>, ${h.live} of ${h.total}
+      models answering. <b>${esc(h.blocked_agents.join(", "))}</b> cannot run until
+      ${h.blocked_agents.length > 1 ? "those agents are" : "that agent is"} repointed.`;
+  } else {
+    note.innerHTML = `Connected to <b>${esc(h.base_url)}</b> — all ${h.live} models
+      Bolt uses are answering.`;
+  }
+
+  const label = { unused: '<span class="badge">not checked</span>',
+                  live: '<span class="badge ok">live</span>',
+                  retired: '<span class="badge warn">retired</span>',
+                  absent: '<span class="badge warn">missing</span>',
+                  unauthorized: '<span class="badge warn">needs a key</span>',
+                  failing: '<span class="badge warn">failing</span>' };
+  $("#model-health").innerHTML = (h.models || []).map((m) => `
+    <div class="mrow">
+      <span class="nm">${esc(m.name)}</span>
+      <span class="who">${m.agents.length ? esc(m.agents.join(", ")) : "unused"}</span>
+      ${label[m.state] || m.state}
+      ${m.detail ? `<span class="det">${esc(m.detail)}</span>` : ""}
+    </div>`).join("") || '<p class="faint" style="font-size:12px">Nothing to check.</p>';
+  $("#model-health-note").textContent =
+    "The models your agents resolve to are called for real — a model that lists "
+    + "but will not answer is the failure this pane exists to catch. The rest of "
+    + "the catalogue is shown but not called, so opening this pane costs "
+    + `${h.total} requests rather than one per model.`;
+}
+
+$("#conn-recheck").onclick = () => checkModels();
 
 /* ---------- agents ---------- */
 let allTools = [];

@@ -68,6 +68,24 @@ def think_for(effort: str | None) -> Any:
     return EFFORT_THINK.get((effort or "default").strip().lower())
 
 
+async def probe_completion(base_url: str, key: str | None, model: str) -> None:
+    """The smallest real request there is, against an endpoint we do not yet use.
+
+    Listing models proves nothing: ollama.com serves its catalogue publicly and
+    then refuses every completion. Raises on failure.
+    """
+    headers = {"Content-Type": "application/json"}
+    if key and key != "ollama":
+        headers["Authorization"] = f"Bearer {key}"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(45, connect=CONNECT_TIMEOUT)) as probe:
+        response = await probe.post(
+            f"{base_url.rstrip('/')}/chat/completions", headers=headers,
+            json={"model": model, "max_tokens": 1,
+                  "messages": [{"role": "user", "content": "hi"}]})
+    if response.status_code != 200:
+        raise LLMError(f"HTTP {response.status_code}: {response.text[:200]}")
+
+
 def native_url(base: str) -> str:
     """/api/chat beside the OpenAI-compatible /v1 the rest of Bolt talks to."""
     trimmed = base.rstrip("/")

@@ -21,7 +21,7 @@ import bolt.registry  # noqa: F401  (registers tools)
 from bolt.api import events
 from dataclasses import replace
 
-from bolt.core import (backgrounds, bus, llm, models as models_mod, proposals,
+from bolt.core import (backgrounds, bus, connection, llm, models as models_mod, proposals,
                        roster, router, store, uploads, workspace)
 from bolt.core.loop import run_agent
 from bolt.quality import gate, metrics
@@ -115,6 +115,13 @@ async def dashboard() -> str:
 
 class OllamaSettings(BaseModel):
     base_url: str | None = None
+    api_key: str | None = None        # omitted means "keep what is stored"
+
+
+class ConnectionChoice(BaseModel):
+    """A source, not a URL: "local", "cloud" or "custom"."""
+    mode: str
+    base_url: str | None = None       # custom only
     api_key: str | None = None        # omitted means "keep what is stored"
 
 
@@ -228,6 +235,129 @@ async def test_ollama() -> dict[str, Any]:
             "known": models_mod.names(), "retired": retired,
             "error": f"models list, but none of {', '.join(refused + retired)} "
                      f"would answer{hint}"}
+
+
+@app.get("/api/connection")
+async def connection_state() -> dict[str, Any]:
+    """Where Bolt points, what else it could point at, and what each can do."""
+    url, _ = llm.endpoint()
+    stored = store.get_setting("ollama.api_key") or ""
+    local, cloud = await asyncio.gather(
+        connection.probe_local(), connection.probe_cloud(stored or None))
+    return {
+        "mode": connection.mode_for(url),
+        "base_url": url,
+        "key_set": bool(stored),
+        "key_masked": _masked(stored),
+        "from_env": not stored and bool(os.environ.get("OLLAMA_API_KEY")),
+        "sources": [local.as_dict(), cloud.as_dict()],
+    }
+
+
+@app.post("/api/connection")
+async def set_connection(choice: ConnectionChoice) -> dict[str, Any]:
+    """Point Bolt at a source and say straight away whether it works."""
+    mode = (choice.mode or "").strip().lower()
+    if mode == "local":
+        probed = await connection.probe_local()
+        if not probed.reachable:
+            raise HTTPException(status_code=400, detail=probed.detail)
+        store.set_setting("ollama.base_url", probed.base_url)
+    elif mode == "cloud":
+        store.set_setting("ollama.base_url", connection.CLOUD_URL)
+    elif mode == "custom":
+        target = (choice.base_url or "").strip().rstrip("/")
+        if not target:
+            raise HTTPException(status_code=400, detail="a custom source needs a URL")
+        store.set_setting("ollama.base_url", target)
+    else:
+        raise HTTPException(status_code=400,
+                            detail="mode must be local, cloud or custom")
+
+    if choice.api_key is not None:
+        key = choice.api_key.strip()
+        if key:
+            store.set_setting("ollama.api_key", key)
+        else:
+            store.delete_setting("ollama.api_key")
+    await llm.aclose()                 # the pooled client holds the old target
+    return await check_models()
+
+
+@app.post("/api/connection/check")
+async def check_models() -> dict[str, Any]:
+    """Every catalogue model, actually called. The only honest health check.
+
+    A connection is fine when something answers. A model being retired
+    upstream is a separate fault, and conflating the two sends people
+    hunting the wrong thing.
+    """
+    url, _ = llm.endpoint()
+    try:
+        served = await models_mod.discovered()
+    except Exception as exc:
+        return {"ok": False, "base_url": url, "models": [],
+                "error": f"cannot reach {url} ({type(exc).__name__})"}
+
+    agents_on: dict[str, list[str]] = {}
+    for name in roster.names():
+        spec = roster.get(name)
+        pick = router.choose(name, "", spec.model, spec.requires, spec.prefers)
+        agents_on.setdefault(pick.model, []).append(name)
+
+    async def one(name: str) -> dict[str, Any]:
+        # Always call it. The listing is not the capability: the Ollama app
+        # lists only what has been pulled, yet proxies any cloud model on
+        # demand, so gating on `served` marked working models as missing.
+        used = agents_on.get(name, [])
+        try:
+            await llm.complete(name, [{"role": "user", "content": "hi"}], max_tokens=1)
+        except Exception as exc:
+            text = str(exc)
+            if "410" in text:
+                return {"name": name, "state": "retired", "agents": used,
+                        "detail": _reason(text) or "retired upstream"}
+            if "401" in text or "Unauthorized" in text:
+                return {"name": name, "state": "unauthorized", "agents": used,
+                        "detail": "needs an API key"}
+            if "404" in text or "not found" in text.lower():
+                return {"name": name, "state": "absent", "agents": used,
+                        "detail": _reason(text) or "this endpoint does not have it"}
+            return {"name": name, "state": "failing", "agents": used,
+                    "detail": _reason(text) or text[:140]}
+        return {"name": name, "state": "live", "agents": used,
+                "detail": "" if name in served else "answers, though not in the listing"}
+
+    # Only the models an agent actually resolves to. The question this pane
+    # answers is "can my agents run", and calling all 27 catalogue entries
+    # would mean 27 real requests every time it is opened.
+    wanted = sorted(agents_on)
+    results = await asyncio.gather(*[one(n) for n in wanted])
+    live = [r for r in results if r["state"] == "live"]
+    broken = [r for r in results if r["state"] != "live" and r["agents"]]
+
+    # The rest are listed without being called, so the pane stays honest about
+    # what it did and did not verify.
+    for name in sorted(set(models_mod.names()) - set(wanted)):
+        results.append({"name": name, "state": "unused", "agents": [],
+                        "detail": "" if name in served else "not served here"})
+
+    return {"ok": bool(live), "base_url": url, "models": results,
+            "served": served,
+            "live": len(live), "total": len(wanted),
+            "blocked_agents": sorted({a for r in broken for a in r["agents"]}),
+            "error": "" if live else "nothing on this endpoint will answer"}
+
+
+def _reason(text: str) -> str:
+    """The server's own sentence out of an error blob, if there is one."""
+    marker = '"message":"'
+    start = text.find(marker)
+    if start < 0:
+        return ""
+    start += len(marker)
+    end = text.find('"', start)
+    return text[start:end if end > start else None][:160]
 
 
 @app.get("/api/tools")
