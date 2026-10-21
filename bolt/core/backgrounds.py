@@ -26,6 +26,9 @@ BACKGROUND_DIR = Path(os.environ.get(
 MANIFEST = BACKGROUND_DIR / "manifest.json"
 WIDTH = int(os.environ.get("BOLT_BACKGROUND_WIDTH", "1920"))
 QUALITY = int(os.environ.get("BOLT_BACKGROUND_QUALITY", "78"))
+# A remote server decides how many bytes it sends. Stream, and stop early rather
+# than hold whatever arrives in memory.
+MAX_PHOTO_BYTES = int(os.environ.get("BOLT_BACKGROUND_MAX_MB", "25")) * 1_000_000
 LICENCE = ("Unsplash License — free to use, commercial or not, no permission "
            "required. https://unsplash.com/license")
 
@@ -158,13 +161,24 @@ def fetch(only: list[str] | None = None, on_progress=None) -> dict[str, int]:
                 counts["skipped"] += 1
                 continue
             try:
-                response = client.get(url_for(photo))
-                if response.status_code != 200 or not response.content:
+                with client.stream("GET", url_for(photo)) as response:
+                    if response.status_code != 200:
+                        counts["failed"] += 1
+                        if on_progress:
+                            on_progress(photo, f"unavailable ({response.status_code})")
+                        continue
+                    body = bytearray()
+                    for chunk in response.iter_bytes():
+                        body.extend(chunk)
+                        if len(body) > MAX_PHOTO_BYTES:
+                            break
+                if not body or len(body) > MAX_PHOTO_BYTES:
                     counts["failed"] += 1
                     if on_progress:
-                        on_progress(photo, f"unavailable ({response.status_code})")
+                        on_progress(photo, "empty" if not body
+                                    else f"over {MAX_PHOTO_BYTES // 1_000_000}MB")
                     continue
-                target.write_bytes(response.content)
+                target.write_bytes(bytes(body))
             except httpx.HTTPError as exc:
                 counts["failed"] += 1
                 if on_progress:

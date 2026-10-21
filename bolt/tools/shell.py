@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import threading
 
 from bolt.core.tools import tool
 from bolt.core import workspace
@@ -59,6 +60,40 @@ ALLOWED = {
 }
 BLOCKED_GIT = {"push", "reset", "clean", "rebase"}
 TIMEOUT = int(os.environ.get("BOLT_SHELL_TIMEOUT", "120"))
+# `cat` on a large file used to arrive here whole: capture_output buffers
+# everything the child writes, so a 300MB file cost ~900MB of resident memory to
+# produce a result the agent loop then cut to 12,000 characters. Keep the head
+# and throw the rest away as it arrives.
+MAX_OUTPUT_CHARS = int(os.environ.get("BOLT_SHELL_MAX_OUTPUT", "100000"))
+MAX_STDERR_CHARS = 8_000
+_CHUNK = 65_536
+
+
+def _drain(stream, cap: int, into: dict) -> None:
+    """Read a pipe to the end, keeping only the first `cap` characters.
+
+    Draining matters as much as capping: stop reading and the child blocks on a
+    full pipe until the timeout kills it.
+    """
+    kept: list[str] = []
+    held = produced = 0
+    try:
+        while True:
+            chunk = stream.read(_CHUNK)
+            if not chunk:
+                break
+            produced += len(chunk)
+            if held < cap:
+                take = chunk[:cap - held]
+                kept.append(take)
+                held += len(take)
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+    into["text"] = "".join(kept)
+    into["produced"] = produced
 
 
 @tool(description="Run an allowlisted shell command in the workspace. No pipes or redirection.",
@@ -91,11 +126,38 @@ def run_shell(command: str) -> str:
                     f"Set BOLT_ALLOW_SECRETS=1 to override.")
 
     try:
-        proc = subprocess.run(parts, cwd=root(), capture_output=True, text=True, timeout=TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return f"ERROR: command timed out after {TIMEOUT}s"
+        proc = subprocess.Popen(
+            parts, cwd=root(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, errors="replace")
     except FileNotFoundError:
         return f"ERROR: {program} not found"
 
-    out = (proc.stdout or "") + (f"\n[stderr]\n{proc.stderr}" if proc.stderr else "")
+    out_box: dict = {"text": "", "produced": 0}
+    err_box: dict = {"text": "", "produced": 0}
+    readers = [
+        threading.Thread(target=_drain, args=(proc.stdout, MAX_OUTPUT_CHARS, out_box),
+                         daemon=True),
+        threading.Thread(target=_drain, args=(proc.stderr, MAX_STDERR_CHARS, err_box),
+                         daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+    try:
+        proc.wait(timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        for reader in readers:
+            reader.join(timeout=5)
+        return f"ERROR: command timed out after {TIMEOUT}s"
+    for reader in readers:
+        reader.join(timeout=5)
+
+    out = out_box["text"]
+    if out_box["produced"] > len(out):
+        out += (f"\n\n[TRUNCATED: the command wrote {out_box['produced']:,} characters; "
+                f"the first {len(out):,} are above. Narrow it down — grep, head, "
+                f"or a range read.]")
+    if err_box["text"]:
+        out += f"\n[stderr]\n{err_box['text']}"
     return f"[exit {proc.returncode}]\n{out.strip() or '(no output)'}"

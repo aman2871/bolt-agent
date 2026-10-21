@@ -53,6 +53,57 @@ def target_dir(conversation_id: str | None = None) -> Path:
     return root / conversation_id if conversation_id else root
 
 
+def check_name(name: str) -> str:
+    """Vet the filename before a single byte of the body is read.
+
+    A 1GB drop that will be refused for its extension should cost nothing to
+    refuse.
+    """
+    filename = safe_name(name)
+    if Path(filename).suffix.lower() not in ALLOWED_SUFFIXES:
+        raise UploadRejected(f"{Path(filename).suffix or 'that file type'} is not accepted")
+    return filename
+
+
+def _destination(filename: str, conversation_id: str | None) -> Path:
+    directory = target_dir(conversation_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / filename
+    if destination.exists():
+        destination = directory / f"{destination.stem}-{int(time.time())}{destination.suffix}"
+    return destination
+
+
+async def save_stream(name: str, chunks, conversation_id: str | None = None) -> tuple[Path, int]:
+    """Write an upload to disk as it arrives, refusing it the moment it is too big.
+
+    Buffering the body first means holding the whole file in memory only to
+    decide it is over the limit, which is the most expensive possible way to say
+    no.
+    """
+    filename = check_name(name)
+    destination = _destination(filename, conversation_id)
+
+    total = 0
+    try:
+        with destination.open("wb") as handle:
+            async for chunk in chunks:
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise UploadRejected(
+                        f"that file is over the {MAX_UPLOAD_BYTES // 1_000_000}MB limit")
+                handle.write(chunk)
+        if not total:
+            raise UploadRejected("that file is empty")
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+    # Belt and braces: confirm the write landed where we meant it to.
+    workspace.resolve(str(destination))
+    return destination, total
+
+
 def save(name: str, data: bytes, conversation_id: str | None = None) -> Path:
     if not data:
         raise UploadRejected("that file is empty")
