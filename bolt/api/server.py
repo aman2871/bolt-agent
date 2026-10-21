@@ -58,13 +58,14 @@ def _consumer_idle_ms(consumer: dict[str, Any]) -> int:
         return inactive
     return int(consumer.get("idle", 0))
 DASHBOARD = Path(__file__).parent / "dashboard" / "index.html"
+ASSETS = Path(__file__).parent / "dashboard" / "assets"
 
 
 class ChatRequest(BaseModel):
     prompt: str
     conversation_id: str | None = None
     agent: str = "manager"
-    budget_tokens: int = Field(400_000, ge=1_000)
+    budget_tokens: int = Field(1_000_000, ge=1_000)
     reply_to: str | None = None      # turn id being replied to
 
 
@@ -77,14 +78,14 @@ class FeedbackRequest(BaseModel):
 class TaskRequest(BaseModel):
     prompt: str
     agent: str = "manager"
-    budget_tokens: int = Field(400_000, ge=1_000)
+    budget_tokens: int = Field(1_000_000, ge=1_000)
     images: list[str] | None = None
 
 
 class CodeRequest(BaseModel):
     task: str
     test_command: str = gate.DEFAULT_TEST_COMMAND
-    budget_tokens: int = Field(400_000, ge=1_000)
+    budget_tokens: int = Field(1_000_000, ge=1_000)
     apply: bool = False
 
 
@@ -93,6 +94,10 @@ class CodeRequest(BaseModel):
 if backgrounds.BACKGROUND_DIR.is_dir():
     app.mount("/backgrounds",
               StaticFiles(directory=str(backgrounds.BACKGROUND_DIR)), name="backgrounds")
+
+# Icons and other dashboard chrome that ships with the source.
+if ASSETS.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(ASSETS)), name="assets")
 
 
 @app.get("/api/backgrounds")
@@ -114,6 +119,7 @@ class OllamaSettings(BaseModel):
 
 
 class AgentPatch(BaseModel):
+    effort: str | None = None
     blurb: str | None = None
     model: str | None = None
     system_prompt: str | None = None
@@ -199,11 +205,15 @@ async def upsert_agent(name: str, patch: AgentPatch) -> dict[str, Any]:
         raise HTTPException(status_code=400,
                             detail="an agent name must be a single word: letters, digits, underscore")
     fields = {k: v for k, v in patch.model_dump().items() if v is not None}
+    if "effort" in fields and fields["effort"] not in llm.EFFORT_CHOICES:
+        raise HTTPException(status_code=400, detail=(
+            f"effort must be one of {', '.join(llm.EFFORT_CHOICES)}"))
     new = key not in roster.load()
     if new and not fields.get("system_prompt"):
         raise HTTPException(status_code=400, detail="a new agent needs a system prompt")
     spec = roster.save(key, fields)
     return {"name": spec.name, "blurb": spec.blurb, "model": spec.model,
+            "effort": spec.effort,
             "tools": spec.tools, "created": new, "builtin": roster.is_builtin(key)}
 
 
@@ -243,7 +253,7 @@ async def list_agents() -> list[dict[str, Any]]:
         out.append({"name": name, "blurb": spec.blurb,
                     "builtin": roster.is_builtin(name),
                     "system_prompt": spec.system_prompt,
-                    "temperature": spec.temperature,
+                    "temperature": spec.temperature, "effort": spec.effort,
                     "model": spec.model, "tools": spec.tools,
                     "max_iterations": spec.max_iterations,
                     "can_delegate_to": spec.can_delegate_to,
@@ -251,6 +261,13 @@ async def list_agents() -> list[dict[str, Any]]:
                     "resolved_model": choice.model, "model_source": choice.source,
                     "model_reason": choice.reason})
     return out
+
+
+@app.get("/api/effort")
+async def effort_choices() -> dict[str, Any]:
+    """Effort levels, and whether this endpoint can actually honour them."""
+    base, _ = llm.endpoint()
+    return {"choices": llm.EFFORT_CHOICES, "native_url": llm.native_url(base)}
 
 
 @app.get("/api/models")
@@ -622,9 +639,16 @@ async def upload_file(file: UploadFile = File(...),
     Agents address everything by path, so this saves into the workspace and hands
     back the path — `watch_video`, `look_at_image` and the rest need no changes.
     """
-    data = await file.read()
+    async def body():
+        while True:
+            chunk = await file.read(1 << 20)
+            if not chunk:
+                break
+            yield chunk
+
     try:
-        saved = uploads.save(file.filename or "upload", data, conversation_id)
+        saved, size = await uploads.save_stream(
+            file.filename or "upload", body(), conversation_id)
     except uploads.UploadRejected as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except OSError as exc:
@@ -637,8 +661,8 @@ async def upload_file(file: UploadFile = File(...),
                                                      ".webp", ".bmp"}
             else "file")
     events.publish("upload", {"agent": "you", "path": relative, "kind": kind,
-                              "bytes": len(data)})
-    return {"path": relative, "name": saved.name, "kind": kind, "bytes": len(data)}
+                              "bytes": size})
+    return {"path": relative, "name": saved.name, "kind": kind, "bytes": size}
 
 
 @app.get("/api/checkpoints")

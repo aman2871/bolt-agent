@@ -9,6 +9,7 @@ import mimetypes
 import os
 import random
 import time
+import uuid
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -49,6 +50,110 @@ CONNECT_TIMEOUT = float(os.environ.get("BOLT_LLM_CONNECT_TIMEOUT", "10"))
 _semaphore = asyncio.Semaphore(int(os.environ.get("BOLT_LLM_CONCURRENCY", "4")))
 
 RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+
+# --- effort ---------------------------------------------------------------
+# Ollama's OpenAI-compatible endpoint accepts `think` and `reasoning_effort` and
+# then ignores them: measured, `think: false` still produced 155 characters of
+# reasoning there, against 0 on the native API. So an agent that asks for an
+# effort level is routed to /api/chat instead, which honours it — on kimi-k3,
+# 10 output tokens at `false` against 175 at `true` for the same right answer.
+EFFORT_THINK: dict[str, Any] = {
+    "off": False, "low": "low", "medium": "medium", "high": "high", "max": True,
+}
+EFFORT_CHOICES = ["default", *EFFORT_THINK]
+
+
+def think_for(effort: str | None) -> Any:
+    """The `think` value for an effort name, or None to stay on the usual path."""
+    return EFFORT_THINK.get((effort or "default").strip().lower())
+
+
+def native_url(base: str) -> str:
+    """/api/chat beside the OpenAI-compatible /v1 the rest of Bolt talks to."""
+    trimmed = base.rstrip("/")
+    if trimmed.endswith("/v1"):
+        trimmed = trimmed[:-3]
+    return trimmed.rstrip("/") + "/api/chat"
+
+
+def _native_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """OpenAI chat messages in the shape /api/chat expects.
+
+    Three things differ: images ride as a list of bare base64 beside the text
+    rather than inside the content array, tool-call arguments are an object and
+    not a JSON string, and a tool result is matched to its call by name.
+    """
+    out = []
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content")
+        converted: dict[str, Any] = {"role": role}
+        if isinstance(content, list):
+            texts, images = [], []
+            for part in content:
+                if part.get("type") == "text":
+                    texts.append(part.get("text") or "")
+                elif part.get("type") == "image_url":
+                    url = (part.get("image_url") or {}).get("url") or ""
+                    if url.startswith("data:"):
+                        images.append(url.split(",", 1)[-1])
+            converted["content"] = "\n".join(texts)
+            if images:
+                converted["images"] = images
+        else:
+            converted["content"] = content or ""
+
+        if role == "tool" and message.get("name"):
+            converted["tool_name"] = message["name"]
+
+        calls = message.get("tool_calls")
+        if calls:
+            native_calls = []
+            for call in calls:
+                fn = call.get("function") or {}
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                native_calls.append(
+                    {"function": {"name": fn.get("name") or "", "arguments": args or {}}})
+            converted["tool_calls"] = native_calls
+        out.append(converted)
+    return out
+
+
+def _native_tool_calls(calls: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Native tool calls back in OpenAI shape. They carry no id, so mint one."""
+    out = []
+    for index, call in enumerate(calls or []):
+        fn = call.get("function") or {}
+        out.append({
+            "id": f"call_{index}_{uuid.uuid4().hex[:8]}",
+            "type": "function",
+            "function": {"name": fn.get("name") or "",
+                         "arguments": json.dumps(fn.get("arguments") or {})},
+        })
+    return out
+
+
+def _native_payload(model: str, messages: list[dict[str, Any]],
+                    tools: list[dict[str, Any]] | None, temperature: float,
+                    max_tokens: int | None, think: Any, stream: bool) -> dict[str, Any]:
+    options: dict[str, Any] = {"temperature": temperature}
+    if max_tokens:
+        options["num_predict"] = max_tokens
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": _native_messages(messages),
+        "think": think,
+        "stream": stream,
+        "options": options,
+    }
+    if tools:
+        payload["tools"] = tools
+    return payload
 
 
 class LLMError(RuntimeError):
@@ -119,8 +224,13 @@ async def complete(
     temperature: float = 0.2,
     max_tokens: int | None = None,
     response_format: dict[str, Any] | None = None,
+    effort: str | None = None,
 ) -> Completion:
     """One chat completion, retrying transient failures with exponential backoff."""
+    think = think_for(effort)
+    if think is not None:
+        return await _complete_native(model, messages, tools, temperature,
+                                      max_tokens, think)
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -156,6 +266,45 @@ async def complete(
             await asyncio.sleep(_backoff(attempt))
 
     raise LLMError(f"{model} call failed after {MAX_ATTEMPTS} attempts, last error: {last_error}")
+
+
+async def _complete_native(model: str, messages: list[dict[str, Any]],
+                           tools: list[dict[str, Any]] | None, temperature: float,
+                           max_tokens: int | None, think: Any) -> Completion:
+    """The same call against Ollama's own API, which honours `think`."""
+    url = native_url(endpoint()[0])
+    payload = _native_payload(model, messages, tools, temperature, max_tokens,
+                              think, stream=False)
+    started = time.monotonic()
+    last_error = ""
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            async with _semaphore:
+                resp = await client().post(url, json=payload)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            await reset_client()
+        else:
+            if resp.status_code == 200:
+                data = resp.json()
+                message = data.get("message") or {}
+                return Completion(
+                    content=message.get("content") or "",
+                    tool_calls=_native_tool_calls(message.get("tool_calls")),
+                    finish_reason=data.get("done_reason") or "stop",
+                    prompt_tokens=int(data.get("prompt_eval_count") or 0),
+                    completion_tokens=int(data.get("eval_count") or 0),
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    attempts=attempt, model=model, raw_message=message)
+            last_error = f"HTTP {resp.status_code}: {resp.text[:400]}"
+            if resp.status_code not in RETRY_STATUS:
+                raise LLMError(f"{model} call failed, {last_error}")
+        if attempt < MAX_ATTEMPTS:
+            await asyncio.sleep(_backoff(attempt))
+
+    raise LLMError(f"{model} call failed after {MAX_ATTEMPTS} attempts, "
+                   f"last error: {last_error}")
 
 
 def _parse(data: dict[str, Any], model: str, started: float, attempts: int) -> Completion:
@@ -214,10 +363,13 @@ def image_data_url(path: Path | str) -> str:
         raise FileNotFoundError(f"no image at {path}")
     if path.suffix.lower() not in IMAGE_TYPES:
         raise ValueError(f"{path.suffix} is not a supported image type")
-    raw = path.read_bytes()
-    if len(raw) > MAX_IMAGE_BYTES:
-        raise ValueError(f"{path.name} is {len(raw) // 1_000_000}MB, over the "
+    # Size first: reading the file to discover it is too big costs exactly as
+    # much memory as the file, which is the thing the limit exists to prevent.
+    size = path.stat().st_size
+    if size > MAX_IMAGE_BYTES:
+        raise ValueError(f"{path.name} is {size // 1_000_000}MB, over the "
                          f"{MAX_IMAGE_BYTES // 1_000_000}MB limit")
+    raw = path.read_bytes()
     mime = mimetypes.guess_type(path.name)[0] or "image/png"
     return f"data:{mime};base64," + base64.b64encode(raw).decode()
 
@@ -230,6 +382,76 @@ def vision_message(text: str, images: list[Path | str], role: str = "user") -> d
         content.append({"type": "image_url", "image_url": {"url": url}})
     return {"role": role, "content": content}
 
+async def _stream_native(model: str, messages: list[dict[str, Any]],
+                         tools: list[dict[str, Any]] | None, temperature: float,
+                         max_tokens: int | None, think: Any,
+                         on_text: Callable[[str], None] | None,
+                         on_reasoning: Callable[[str], None] | None) -> Completion:
+    """Streamed /api/chat: newline-delimited JSON, one object per fragment."""
+    url = native_url(endpoint()[0])
+    payload = _native_payload(model, messages, tools, temperature, max_tokens,
+                              think, stream=True)
+    started = time.monotonic()
+    last_error = ""
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        text, calls = [], []
+        prompt_tokens = completion_tokens = 0
+        finish = "stop"
+        try:
+            async with _semaphore:
+                async with client().stream("POST", url, json=payload) as response:
+                    if response.status_code != 200:
+                        body = (await response.aread()).decode(errors="replace")
+                        last_error = f"HTTP {response.status_code}: {body[:400]}"
+                        if response.status_code not in RETRY_STATUS:
+                            raise LLMError(f"{model} call failed, {last_error}")
+                        raise _Retry()
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        message = chunk.get("message") or {}
+                        if piece := message.get("content"):
+                            text.append(piece)
+                            if on_text:
+                                on_text(piece)
+                        if thought := message.get("thinking"):
+                            if on_reasoning:
+                                on_reasoning(thought)
+                        if message.get("tool_calls"):
+                            calls.extend(message["tool_calls"])
+                        if chunk.get("done"):
+                            finish = chunk.get("done_reason") or "stop"
+                            prompt_tokens = int(chunk.get("prompt_eval_count") or 0)
+                            completion_tokens = int(chunk.get("eval_count") or 0)
+        except _Retry:
+            pass
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            await reset_client()
+        else:
+            return Completion(
+                content="".join(text), tool_calls=_native_tool_calls(calls),
+                finish_reason=finish, prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                attempts=attempt, model=model)
+        if attempt < MAX_ATTEMPTS:
+            await asyncio.sleep(_backoff(attempt))
+
+    raise LLMError(f"{model} stream failed after {MAX_ATTEMPTS} attempts, "
+                   f"last error: {last_error}")
+
+
+class _Retry(Exception):
+    """A retryable status inside the streaming context manager."""
+
+
 async def stream(
     model: str,
     messages: list[dict[str, Any]],
@@ -238,6 +460,7 @@ async def stream(
     max_tokens: int | None = None,
     on_text: Callable[[str], None] | None = None,
     on_reasoning: Callable[[str], None] | None = None,
+    effort: str | None = None,
 ) -> Completion:
     """Same contract as complete(), but text arrives as it is generated.
 
@@ -249,6 +472,10 @@ async def stream(
     something we can resume, and replaying is better than returning a truncated
     one — callers are told to discard what they have via `on_reset`.
     """
+    think = think_for(effort)
+    if think is not None:
+        return await _stream_native(model, messages, tools, temperature,
+                                    max_tokens, think, on_text, on_reasoning)
     payload: dict[str, Any] = {
         "model": model, "messages": messages,
         "temperature": temperature, "stream": True,

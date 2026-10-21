@@ -60,6 +60,7 @@ def _spec(name: str, merged: dict[str, Any]) -> AgentSpec:
         max_iterations=int(merged.get("max_iterations", 8)),
         max_tokens=merged.get("max_tokens"),
         temperature=float(merged.get("temperature", 0.2)),
+        effort=str(merged.get("effort", "default")),
         can_delegate_to=list(merged.get("can_delegate_to") or []),
         requires=list(merged.get("requires") or []),
         prefers=list(merged.get("prefers") or []),

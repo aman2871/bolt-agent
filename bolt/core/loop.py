@@ -22,6 +22,10 @@ class AgentSpec:
     max_iterations: int = 8
     max_tokens: int | None = None
     temperature: float = 0.2
+    # How hard the model should think before answering. "default" sends nothing
+    # and leaves the model to decide; anything else needs Ollama's native API,
+    # because the OpenAI-compatible endpoint silently drops it.
+    effort: str = "default"
     can_delegate_to: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)   # hard needs, e.g. "vision"
     prefers: list[str] = field(default_factory=list)    # strengths to favour
@@ -34,7 +38,7 @@ class RunContext:
     root_id: str
     spec: AgentSpec
     depth: int = 0
-    budget_tokens: int = 200_000
+    budget_tokens: int = 1_000_000
     extra: dict[str, Any] = field(default_factory=dict)
     model: str = ""      # the model actually resolved for this run
 
@@ -102,7 +106,7 @@ async def run_agent(
     root_id: str | None = None,
     parent_id: str | None = None,
     depth: int = 0,
-    budget_tokens: int = 200_000,
+    budget_tokens: int = 1_000_000,
     extra: dict[str, Any] | None = None,
     images: list[str] | None = None,
     history: list[dict[str, str]] | None = None,
@@ -181,6 +185,7 @@ async def run_agent(
                 completion = await llm.stream(
                     model, request_messages, tool_schemas or None,
                     temperature=spec.temperature, max_tokens=spec.max_tokens,
+                    effort=spec.effort,
                     on_text=lambda piece: emit("delta", {"text": piece}),
                     on_reasoning=lambda piece: emit("reasoning", {"text": piece}),
                 )
@@ -189,6 +194,7 @@ async def run_agent(
                 completion = await llm.complete(
                     model, request_messages, tool_schemas or None,
                     temperature=spec.temperature, max_tokens=spec.max_tokens,
+                    effort=spec.effort,
                 )
         except llm.LLMError as exc:
             store.record_run(task_id, spec.name, model, iteration, 0, 0, 0, ok=False, error=str(exc))
@@ -245,7 +251,7 @@ async def run_agent(
     })
     try:
         final = await llm.complete(model, messages, None, temperature=spec.temperature,
-                                   max_tokens=spec.max_tokens)
+                                   max_tokens=spec.max_tokens, effort=spec.effort)
     except llm.LLMError as exc:
         error = (f"hit the {spec.max_iterations}-iteration cap, and the closing "
                  f"summary also failed: {exc}")
