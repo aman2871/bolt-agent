@@ -559,12 +559,35 @@
   .mrow .who { color: var(--faint); font-size: 10.5px; }
   .mrow .det { color: var(--bad); font-size: 10.5px; max-width: 46%; text-align: right; }
 
+  /* These controls save on change, with no Save button -- which is only
+     honest if the control says so when it lands. */
+  .saved-flash { position: relative; }
+  .saved-flash::after { content: "saved"; position: absolute; right: 0; top: -15px;
+                        font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase;
+                        color: var(--ok); opacity: 0; animation: saidso 1.6s ease-out; }
+  @keyframes saidso { 0% { opacity: 0; transform: translateY(3px); }
+                      18% { opacity: 1; transform: none; }
+                      70% { opacity: 1; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .saved-flash::after { animation: none; opacity: 1; }
+  }
+
   select.agent-model { flex: none; min-width: 0; width: auto; max-width: 230px;
                       padding: 3px 7px; font-size: 11px; font-family: inherit;
                       border-radius: 7px; border: 1px solid var(--line);
                       background: var(--panel2); color: var(--faint); cursor: pointer; }
   select.agent-model:hover { border-color: var(--dim); color: var(--text); }
-  select.agent-model.pinned { color: var(--acc); border-color: var(--acc); }
+  /* Not accent: an accent outline reads as focus in this UI (the nav item, the
+     primary buttons), so a pinned row looked like an unsaved edit. Pinned is a
+     fact about the row, and says so in words beside it. */
+  select.agent-model.pinned { color: var(--text); }
+  .pin-note { display: inline-flex; align-items: center; gap: 6px; flex: none;
+              font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+              color: var(--faint); }
+  .pin-note button { padding: 0; border: 0; background: none; color: var(--faint);
+                     font: inherit; text-transform: none; letter-spacing: 0;
+                     font-size: 10.5px; text-decoration: underline; cursor: pointer; }
+  .pin-note button:hover { color: var(--text); }
   select.agent-model:disabled { opacity: .45; cursor: not-allowed; }
 
   /* One effort control per agent, in the row of the model it resolves to —
@@ -577,7 +600,7 @@
                   border: 1px solid var(--line); background: var(--panel2);
                   color: var(--faint); cursor: pointer; }
   select.effort:hover { border-color: var(--dim); color: var(--text); }
-  select.effort.set { color: var(--acc); border-color: var(--acc); }
+  select.effort.set { color: var(--text); border-color: var(--dim); }
   select.effort:disabled { opacity: .45; cursor: not-allowed; }
 
   #photo-section { margin-top: 0; }
@@ -963,7 +986,8 @@
     <div class="settings-pane" id="pane-agents" hidden>
       <div id="agent-list"></div>
       <div class="field-actions">
-        <span class="faint">Shipped agents can be edited and reset; your own can be deleted.</span>
+        <span class="faint">A model change saves as you pick it. Edit opens the
+          rest of an agent, which has its own Save.</span>
         <button type="button" id="agent-new">New agent</button>
       </div>
       <div id="agent-editor" hidden></div>
@@ -1359,6 +1383,7 @@ async function refreshModels() {
           return;
         }
         sel.classList.toggle("set", sel.value !== "default");
+        flashSaved(sel);
         await loadAgents();                      // keep _agents in step
       } finally { sel.disabled = false; }
     };
@@ -2960,6 +2985,17 @@ document.querySelectorAll(".snav").forEach((b) =>
 /* The key is written to the server's settings table and never sent back: the
    dashboard only ever sees a mask, so a shared screen cannot leak it. */
 let knownModels = [];
+/* Controls that save on change owe the person an acknowledgement; without
+   one the only way to know it worked is to reload and look. */
+function flashSaved(el) {
+  const host = el.closest(".effort-pair") || el.parentElement;
+  if (!host) return;
+  host.classList.remove("saved-flash");
+  void host.offsetWidth;                 // restart the animation
+  host.classList.add("saved-flash");
+  setTimeout(() => host.classList.remove("saved-flash"), 1700);
+}
+
 let _conn = null;
 
 async function loadConnection() {
@@ -3134,10 +3170,24 @@ async function loadAgentEditor() {
         <option value="auto"${pinned ? "" : " selected"}>auto — ${esc(a.resolved_model || a.model)}</option>
         ${options}
       </select>
+      ${pinned ? `<span class="pin-note">pinned
+          <button type="button" class="unpin" data-agent="${esc(a.name)}">use auto</button>
+        </span>` : ""}
       ${a.builtin ? "" : '<span class="tag ok">yours</span>'}
       <button type="button" class="agent-edit" data-agent="${esc(a.name)}">Edit</button>
     </div>`;
   }).join("");
+
+  document.querySelectorAll(".unpin").forEach((b) => b.onclick = async () => {
+    b.disabled = true;
+    await fetch(`/api/agents/${encodeURIComponent(b.dataset.agent)}/model`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "auto" }),
+    });
+    await loadAgents();
+    loadAgentEditor();
+    refreshOverview();
+  });
 
   document.querySelectorAll(".agent-model").forEach((sel) => {
     const was = sel.value;
@@ -3156,9 +3206,12 @@ async function loadAgentEditor() {
           alert(err.detail);
           return;
         }
+        flashSaved(sel);
         await loadAgents();        // resolved models and the overview change too
-        loadAgentEditor();
         refreshOverview();
+        // Deliberately not re-rendering the list here: it would replace the
+        // control the person is still looking at, and take the acknowledgement
+        // with it. The next open picks up the new value.
       } finally { sel.disabled = false; }
     };
   });
